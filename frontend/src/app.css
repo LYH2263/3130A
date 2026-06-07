@@ -18,3 +18,19 @@ body {
 * {
   box-sizing: border-box;
 }
+
+@keyframes countdown-blink {
+  0%, 100% {
+    opacity: 1;
+    color: #dc2626;
+  }
+  50% {
+    opacity: 0.4;
+    color: #ef4444;
+  }
+}
+
+.countdown-warning {
+  animation: countdown-blink 0.8s ease-in-out infinite;
+  text-shadow: 0 0 8px rgba(220, 38, 38, 0.4);
+}

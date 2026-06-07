@@ -241,3 +241,42 @@ export async function fetchSetQuiz(token, setId) {
 export async function fetchAttemptDetail(token, attemptId) {
   return apiRequest(`/student/attempts/${attemptId}`, { token });
 }
+
+export async function fetchExamConfigs(token) {
+  return apiRequest('/student/exam-configs', { token });
+}
+
+export async function fetchTeacherExamConfigs(token) {
+  return apiRequest('/teacher/exam-configs', { token });
+}
+
+export async function createExamConfig(token, data) {
+  return apiRequest('/teacher/exam-configs', {
+    method: 'POST',
+    token,
+    body: data,
+  });
+}
+
+export async function updateExamConfig(token, id, data) {
+  return apiRequest(`/teacher/exam-configs/${id}`, {
+    method: 'PUT',
+    token,
+    body: data,
+  });
+}
+
+export async function deleteExamConfig(token, id) {
+  return apiRequest(`/teacher/exam-configs/${id}`, {
+    method: 'DELETE',
+    token,
+  });
+}
+
+export async function startQuiz(token, data = {}) {
+  return apiRequest('/student/start-quiz', {
+    method: 'POST',
+    token,
+    body: data,
+  });
+}

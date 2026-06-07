@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'react-hot-toast';
 
-import { apiRequest, fetchMistakeReviewQuiz, submitMistakeReview, saveDraft, getDraft, clearDraft, fetchExplanations, toggleFavorite, fetchFavoriteStatus, fetchSetQuiz, fetchAttemptDetail } from '../api/client';
+import { apiRequest, fetchMistakeReviewQuiz, submitMistakeReview, saveDraft, getDraft, clearDraft, fetchExplanations, toggleFavorite, fetchFavoriteStatus, fetchSetQuiz, fetchAttemptDetail, fetchExamConfigs, startQuiz as startQuizApi } from '../api/client';
+import { CountdownTimer } from '../components/CountdownTimer';
 import { FavoritesAndSets } from './FavoritesAndSets';
 import { StatCard } from '../components/StatCard';
 import { QUESTION_TYPE_LABELS } from '../utils/validators';
@@ -663,8 +664,15 @@ export function StudentDashboard({ user, token, onLogout }) {
   const [showReportModal, setShowReportModal] = useState(false);
   const [reportData, setReportData] = useState(null);
   const [reportLoading, setReportLoading] = useState(false);
+  const [examConfigs, setExamConfigs] = useState([]);
+  const [selectedExamConfigId, setSelectedExamConfigId] = useState(null);
+  const [deadline, setDeadline] = useState(null);
+  const [startedAt, setStartedAt] = useState(null);
+  const [allowEarlySubmit, setAllowEarlySubmit] = useState(true);
+  const [isAutoSubmitting, setIsAutoSubmitting] = useState(false);
   const saveDraftTimerRef = useRef(null);
   const saveDraftStatusTimerRef = useRef(null);
+  const hasAutoSubmittedRef = useRef(false);
 
   const className = user.classRoom?.name || '未分班';
 
@@ -691,12 +699,18 @@ export function StudentDashboard({ user, token, onLogout }) {
   const loadStudentData = async () => {
     setLoading(true);
     try {
-      const [mistakeData, attemptData] = await Promise.all([
+      const [mistakeData, attemptData, examConfigData] = await Promise.all([
         apiRequest('/student/mistakes', { token }),
         apiRequest('/student/attempts', { token }),
+        fetchExamConfigs(token),
       ]);
       setMistakes(mistakeData);
       setAttempts(attemptData);
+      setExamConfigs(examConfigData || []);
+      const defaultConfig = (examConfigData || []).find((c) => c.isDefault);
+      if (defaultConfig && !selectedExamConfigId) {
+        setSelectedExamConfigId(defaultConfig.id);
+      }
     } catch (error) {
       toast.error(error.message || '加载学生数据失败');
     } finally {
@@ -764,7 +778,12 @@ export function StudentDashboard({ user, token, onLogout }) {
   const startFreshQuiz = async (mode) => {
     try {
       setLoadingQuiz(true);
+      hasAutoSubmittedRef.current = false;
       let quiz;
+      let quizDeadline = null;
+      let quizStartedAt = null;
+      let quizAllowEarlySubmit = true;
+
       if (mode === 'review') {
         quiz = await fetchMistakeReviewQuiz(token, 10);
         if (quiz.length === 0) {
@@ -777,9 +796,19 @@ export function StudentDashboard({ user, token, onLogout }) {
         quiz = await fetchSetQuiz(token, mode);
         toast.success(`已生成题集练习卷，共${quiz.length}道题`);
       } else {
-        quiz = await apiRequest('/student/questions?limit=10', { token });
-        toast.success('已生成新试卷，选项顺序已随机');
+        const startData = {
+          mode: 'normal',
+          limit: 10,
+          examConfigId: selectedExamConfigId || null,
+        };
+        const result = await startQuizApi(token, startData);
+        quiz = result.questions;
+        quizDeadline = result.deadline;
+        quizStartedAt = result.startedAt;
+        quizAllowEarlySubmit = result.allowEarlySubmit;
+        toast.success(`已生成新试卷，共${quiz.length}道题，${result.durationMinutes}分钟限时`);
       }
+
       setQuestions(quiz);
       setAnswers({});
       setLastResult(null);
@@ -787,6 +816,9 @@ export function StudentDashboard({ user, token, onLogout }) {
       setNormalQuizKPMap({});
       setMistakeReviewResult(null);
       setQuizMode(mode);
+      setDeadline(quizDeadline);
+      setStartedAt(quizStartedAt);
+      setAllowEarlySubmit(quizAllowEarlySubmit);
       loadFavoriteStatus(quiz.map((q) => q.id));
     } catch (error) {
       toast.error(error.message || '拉取试卷失败');
@@ -1034,9 +1066,62 @@ export function StudentDashboard({ user, token, onLogout }) {
     return true;
   };
 
+  const handleAutoSubmit = async () => {
+    if (hasAutoSubmittedRef.current || isAutoSubmitting || submitting) return;
+    if (!questions.length || quizMode === 'review') return;
+
+    hasAutoSubmittedRef.current = true;
+    setIsAutoSubmitting(true);
+    toast('考试时间到，自动提交中...', { icon: '⏰' });
+
+    try {
+      const answersPayload = buildAnswersPayload();
+      const payload = { answers: answersPayload };
+      const result = await apiRequest('/student/submit', {
+        method: 'POST',
+        token,
+        body: payload,
+      });
+      setLastResult(result);
+      setDeadline(null);
+      setStartedAt(null);
+
+      try {
+        const questionIds = questions.map((q) => q.id);
+        const explanations = await fetchExplanations(token, questionIds);
+        setNormalQuizExplanations(explanations || []);
+        const kpMap = {};
+        (explanations || []).forEach((e) => {
+          if (e.questionId && e.knowledgePoints) {
+            kpMap[e.questionId] = e.knowledgePoints;
+          }
+        });
+        setNormalQuizKPMap(kpMap);
+      } catch (exErr) {
+        console.warn('获取解析失败:', exErr);
+      }
+
+      await loadStudentData();
+      if (result.timeout) {
+        toast.success(`已超时自动提交：${result.score}/${result.total}`);
+      } else {
+        toast.success(`提交成功：${result.score}/${result.total}`);
+      }
+    } catch (error) {
+      toast.error(error.message || '自动提交失败');
+    } finally {
+      setIsAutoSubmitting(false);
+    }
+  };
+
   const submitQuiz = async () => {
     if (!questions.length) {
       toast.error('请先开始答题');
+      return;
+    }
+
+    if (!allowEarlySubmit && deadline && new Date().getTime() < new Date(deadline).getTime()) {
+      toast.error('当前考试不允许提前交卷');
       return;
     }
 
@@ -1061,7 +1146,14 @@ export function StudentDashboard({ user, token, onLogout }) {
           body: payload,
         });
         setLastResult(result);
-        toast.success(`提交成功：${result.score}/${result.total}`);
+        setDeadline(null);
+        setStartedAt(null);
+
+        if (result.timeout) {
+          toast.success(`已超时提交：${result.score}/${result.total}`);
+        } else {
+          toast.success(`提交成功：${result.score}/${result.total}`);
+        }
 
         try {
           const questionIds = questions.map((q) => q.id);
@@ -1097,9 +1189,21 @@ export function StudentDashboard({ user, token, onLogout }) {
             <h1 className="mt-1 text-2xl font-bold text-slate-800">学生答题中心</h1>
             <p className="text-sm text-slate-600">当前班级：{className}</p>
           </div>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             {activeTab === 'quiz' && (
               <>
+                <select
+                  className="select select-bordered select-sm w-48"
+                  value={selectedExamConfigId || ''}
+                  onChange={(e) => setSelectedExamConfigId(Number(e.target.value) || null)}
+                  disabled={loadingQuiz || questions.length > 0}
+                >
+                  {examConfigs.map((config) => (
+                    <option key={config.id} value={config.id}>
+                      {config.name}
+                    </option>
+                  ))}
+                </select>
                 <button
                   className="btn btn-outline btn-primary"
                   onClick={startQuiz}
@@ -1167,7 +1271,7 @@ export function StudentDashboard({ user, token, onLogout }) {
             </div>
 
             <article className="rounded-3xl border border-slate-200 bg-white p-5 shadow-card">
-              <div className="mb-3 flex items-center justify-between">
+              <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div className="flex items-center gap-3">
                   <h2 className="text-lg font-semibold text-slate-800">
                     {quizMode === 'review' ? '错题重练' : '在线答题'}
@@ -1194,13 +1298,22 @@ export function StudentDashboard({ user, token, onLogout }) {
                     </span>
                   )}
                 </div>
-                <button
-                  className="btn btn-sm btn-secondary"
-                  onClick={submitQuiz}
-                  disabled={submitting || !questions.length}
-                >
-                  {submitting ? '提交中...' : '提交本次答案'}
-                </button>
+                <div className="flex items-center gap-3">
+                  {deadline && questions.length > 0 && !lastResult && (
+                    <CountdownTimer
+                      deadline={deadline}
+                      onTimeout={handleAutoSubmit}
+                      allowEarlySubmit={allowEarlySubmit}
+                    />
+                  )}
+                  <button
+                    className="btn btn-sm btn-secondary"
+                    onClick={submitQuiz}
+                    disabled={submitting || isAutoSubmitting || !questions.length || (deadline && !allowEarlySubmit && !lastResult)}
+                  >
+                    {submitting || isAutoSubmitting ? '提交中...' : '提交本次答案'}
+                  </button>
+                </div>
               </div>
 
               {!questions.length ? (
@@ -1230,8 +1343,23 @@ export function StudentDashboard({ user, token, onLogout }) {
 
               {lastResult && quizMode === 'normal' ? (
                 <div className="mt-4 space-y-4">
-                  <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
-                    本次成绩：{lastResult.score}/{lastResult.total}（正确率 {lastResult.rate}）
+                  <div className={`rounded-xl border px-4 py-3 text-sm ${
+                    lastResult.timeout
+                      ? 'border-amber-300 bg-amber-50 text-amber-800'
+                      : 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                  }`}>
+                    <div className="flex items-center gap-2">
+                      <span>本次成绩：{lastResult.score}/{lastResult.total}（正确率 {lastResult.rate}）</span>
+                      {lastResult.timeout && (
+                        <span className="badge badge-warning badge-xs">超时提交</span>
+                      )}
+                    </div>
+                    {lastResult.startedAt && lastResult.deadline && (
+                      <div className="mt-1 text-xs opacity-80">
+                        开始时间：{new Date(lastResult.startedAt).toLocaleTimeString()}，
+                        截止时间：{new Date(lastResult.deadline).toLocaleTimeString()}
+                      </div>
+                    )}
                   </div>
                   {lastResult.details && lastResult.details.length > 0 && (
                     <ResultDetail
