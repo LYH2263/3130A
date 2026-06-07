@@ -40,6 +40,8 @@ func autoMigrate(db *gorm.DB, log *slog.Logger) error {
 	if err := db.AutoMigrate(
 		&models.ClassRoom{},
 		&models.User{},
+		&models.Category{},
+		&models.Tag{},
 		&models.Question{},
 		&models.QuestionOption{},
 		&models.BlankAnswer{},

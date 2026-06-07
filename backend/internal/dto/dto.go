@@ -25,9 +25,50 @@ type QuestionInput struct {
 	Type          string                `json:"type" binding:"required,oneof=single multiple judge blank"`
 	Title         string                `json:"title" binding:"required,min=2,max=1000"`
 	Description   string                `json:"description" binding:"max=2000"`
+	CategoryID    *uint                 `json:"categoryId"`
+	TagNames      []string              `json:"tagNames"`
 	Options       []QuestionOptionInput `json:"options" binding:"dive"`
 	BlankAnswers  []BlankAnswerInput    `json:"blankAnswers" binding:"dive"`
 	MultipleScore string                `json:"multipleScore" binding:"omitempty,oneof=all_or_nothing partial"`
+}
+
+type QuestionQuery struct {
+	Keyword    string   `form:"keyword"`
+	CategoryID *uint    `form:"categoryId"`
+	TagIDs     []uint   `form:"tagIds"`
+	TagMode    string   `form:"tagMode" binding:"omitempty,oneof=and or"`
+	Page       int      `form:"page,default=1"`
+	PageSize   int      `form:"pageSize,default=20"`
+}
+
+type PaginatedQuestions struct {
+	Items    []QuestionDetail `json:"items"`
+	Total    int64            `json:"total"`
+	Page     int              `json:"page"`
+	PageSize int              `json:"pageSize"`
+}
+
+type QuestionDetail struct {
+	ID            uint   `json:"id"`
+	Type          string `json:"type"`
+	Title         string `json:"title"`
+	Description   string `json:"description"`
+	CategoryID    *uint  `json:"categoryId"`
+	CategoryName  string `json:"categoryName"`
+	CreatedBy     uint   `json:"createdBy"`
+	MultipleScore string `json:"multipleScore"`
+	CreatedAt     string `json:"createdAt"`
+	UpdatedAt     string `json:"updatedAt"`
+}
+
+type CategoryInput struct {
+	Name     string `json:"name" binding:"required,max=128"`
+	ParentID *uint  `json:"parentId"`
+	Sort     int    `json:"sort"`
+}
+
+type TagInput struct {
+	Name string `json:"name" binding:"required,max=64"`
 }
 
 type UploadQuestionPayload struct {

@@ -63,11 +63,36 @@ type User struct {
 	UpdatedAt    time.Time  `json:"updatedAt"`
 }
 
+type Category struct {
+	ID        uint       `gorm:"primaryKey" json:"id"`
+	ParentID  *uint      `gorm:"index" json:"parentId"`
+	Name      string     `gorm:"size:128;not null" json:"name"`
+	Sort      int        `gorm:"not null;default:0" json:"sort"`
+	Children  []Category `gorm:"foreignKey:ParentID" json:"children,omitempty"`
+	CreatedAt time.Time  `json:"createdAt"`
+	UpdatedAt time.Time  `json:"updatedAt"`
+}
+
+type Tag struct {
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	Name      string    `gorm:"size:64;uniqueIndex;not null" json:"name"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+type QuestionTag struct {
+	QuestionID uint `gorm:"primaryKey;index" json:"questionId"`
+	TagID      uint `gorm:"primaryKey;index" json:"tagId"`
+}
+
 type Question struct {
 	ID            uint             `gorm:"primaryKey" json:"id"`
 	Type          string           `gorm:"size:16;not null;default:'single';index" json:"type"`
 	Title         string           `gorm:"type:text;not null" json:"title"`
 	Description   string           `gorm:"type:text" json:"description"`
+	CategoryID    *uint            `gorm:"index" json:"categoryId"`
+	Category      *Category        `gorm:"foreignKey:CategoryID" json:"category,omitempty"`
+	Tags          []Tag            `gorm:"many2many:question_tags;" json:"tags,omitempty"`
 	CreatedBy     uint             `gorm:"index" json:"createdBy"`
 	Options       []QuestionOption `json:"options,omitempty"`
 	BlankAnswers  []BlankAnswer    `json:"blankAnswers,omitempty"`

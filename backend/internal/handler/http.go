@@ -18,6 +18,8 @@ import (
 
 type HTTPHandler struct {
 	authSvc     *service.AuthService
+	categorySvc *service.CategoryService
+	tagSvc      *service.TagService
 	questionSvc *service.QuestionService
 	attemptSvc  *service.AttemptService
 	tokens      *auth.TokenManager
@@ -26,6 +28,8 @@ type HTTPHandler struct {
 
 func New(
 	authSvc *service.AuthService,
+	categorySvc *service.CategoryService,
+	tagSvc *service.TagService,
 	questionSvc *service.QuestionService,
 	attemptSvc *service.AttemptService,
 	tokens *auth.TokenManager,
@@ -33,6 +37,8 @@ func New(
 ) *HTTPHandler {
 	return &HTTPHandler{
 		authSvc:     authSvc,
+		categorySvc: categorySvc,
+		tagSvc:      tagSvc,
 		questionSvc: questionSvc,
 		attemptSvc:  attemptSvc,
 		tokens:      tokens,
@@ -66,7 +72,18 @@ func (h *HTTPHandler) Router() *gin.Engine {
 				teacher.GET("/class-stats", h.teacherClassStats)
 				teacher.GET("/attempts", h.teacherAttempts)
 
+				teacher.GET("/categories", h.listCategories)
+				teacher.POST("/categories", h.createCategory)
+				teacher.PUT("/categories/:id", h.updateCategory)
+				teacher.DELETE("/categories/:id", h.deleteCategory)
+
+				teacher.GET("/tags", h.listTags)
+				teacher.POST("/tags", h.createTag)
+				teacher.PUT("/tags/:id", h.updateTag)
+				teacher.DELETE("/tags/:id", h.deleteTag)
+
 				teacher.GET("/questions", h.listQuestions)
+				teacher.GET("/questions/:id", h.getQuestion)
 				teacher.POST("/questions", h.createQuestion)
 				teacher.PUT("/questions/:id", h.updateQuestion)
 				teacher.DELETE("/questions/:id", h.deleteQuestion)
@@ -138,12 +155,33 @@ func (h *HTTPHandler) listClasses(c *gin.Context) {
 }
 
 func (h *HTTPHandler) listQuestions(c *gin.Context) {
-	questions, err := h.questionSvc.ListQuestions()
+	var query dto.QuestionQuery
+	if err := c.ShouldBindQuery(&query); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "invalid query parameters"})
+		return
+	}
+
+	result, err := h.questionSvc.QueryQuestions(query, h.categorySvc)
 	if err != nil {
+		h.log.Error("list questions failed", "error", err.Error())
 		c.JSON(http.StatusInternalServerError, gin.H{"message": "failed to load questions"})
 		return
 	}
-	c.JSON(http.StatusOK, questions)
+	c.JSON(http.StatusOK, result)
+}
+
+func (h *HTTPHandler) getQuestion(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "invalid question id"})
+		return
+	}
+	question, err := h.questionSvc.GetQuestion(uint(id))
+	if err != nil {
+		h.respondServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, question)
 }
 
 func (h *HTTPHandler) createQuestion(c *gin.Context) {
@@ -157,7 +195,7 @@ func (h *HTTPHandler) createQuestion(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"message": "invalid question payload"})
 		return
 	}
-	question, err := h.questionSvc.CreateQuestion(req, claims.UserID)
+	question, err := h.questionSvc.CreateQuestion(req, claims.UserID, h.tagSvc)
 	if err != nil {
 		h.respondServiceError(c, err)
 		return
@@ -176,7 +214,7 @@ func (h *HTTPHandler) updateQuestion(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"message": "invalid question payload"})
 		return
 	}
-	question, err := h.questionSvc.UpdateQuestion(uint(id), req)
+	question, err := h.questionSvc.UpdateQuestion(uint(id), req, h.tagSvc)
 	if err != nil {
 		h.respondServiceError(c, err)
 		return
@@ -315,14 +353,129 @@ func (h *HTTPHandler) studentAttempts(c *gin.Context) {
 	c.JSON(http.StatusOK, items)
 }
 
+func (h *HTTPHandler) listCategories(c *gin.Context) {
+	categories, err := h.categorySvc.ListTree()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "failed to load categories"})
+		return
+	}
+	c.JSON(http.StatusOK, categories)
+}
+
+func (h *HTTPHandler) createCategory(c *gin.Context) {
+	var req dto.CategoryInput
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "invalid category payload"})
+		return
+	}
+	category, err := h.categorySvc.CreateCategory(req.Name, req.ParentID, req.Sort)
+	if err != nil {
+		h.respondServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, category)
+}
+
+func (h *HTTPHandler) updateCategory(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "invalid category id"})
+		return
+	}
+	var req dto.CategoryInput
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "invalid category payload"})
+		return
+	}
+	category, err := h.categorySvc.UpdateCategory(uint(id), req.Name, req.ParentID, req.Sort)
+	if err != nil {
+		h.respondServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, category)
+}
+
+func (h *HTTPHandler) deleteCategory(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "invalid category id"})
+		return
+	}
+	if err := h.categorySvc.DeleteCategory(uint(id)); err != nil {
+		h.respondServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "category deleted"})
+}
+
+func (h *HTTPHandler) listTags(c *gin.Context) {
+	tags, err := h.tagSvc.ListTags()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "failed to load tags"})
+		return
+	}
+	c.JSON(http.StatusOK, tags)
+}
+
+func (h *HTTPHandler) createTag(c *gin.Context) {
+	var req dto.TagInput
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "invalid tag payload"})
+		return
+	}
+	tag, err := h.tagSvc.CreateTag(req.Name)
+	if err != nil {
+		h.respondServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, tag)
+}
+
+func (h *HTTPHandler) updateTag(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "invalid tag id"})
+		return
+	}
+	var req dto.TagInput
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "invalid tag payload"})
+		return
+	}
+	tag, err := h.tagSvc.UpdateTag(uint(id), req.Name)
+	if err != nil {
+		h.respondServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, tag)
+}
+
+func (h *HTTPHandler) deleteTag(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "invalid tag id"})
+		return
+	}
+	if err := h.tagSvc.DeleteTag(uint(id)); err != nil {
+		h.respondServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "tag deleted"})
+}
+
 func (h *HTTPHandler) respondServiceError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, service.ErrUserExists):
 		c.JSON(http.StatusConflict, gin.H{"message": err.Error()})
 	case errors.Is(err, service.ErrInvalidCredential):
 		c.JSON(http.StatusUnauthorized, gin.H{"message": err.Error()})
-	case errors.Is(err, service.ErrClassNotFound), errors.Is(err, service.ErrQuestionNotFound):
+	case errors.Is(err, service.ErrClassNotFound),
+		errors.Is(err, service.ErrQuestionNotFound),
+		errors.Is(err, service.ErrCategoryNotFound),
+		errors.Is(err, service.ErrTagNotFound):
 		c.JSON(http.StatusNotFound, gin.H{"message": err.Error()})
+	case errors.Is(err, service.ErrTagExists):
+		c.JSON(http.StatusConflict, gin.H{"message": err.Error()})
 	case errors.Is(err, service.ErrNoQuestions):
 		c.JSON(http.StatusNotFound, gin.H{"message": err.Error()})
 	case errors.Is(err, service.ErrInvalidQuestion),
@@ -336,7 +489,10 @@ func (h *HTTPHandler) respondServiceError(c *gin.Context, err error) {
 		errors.Is(err, service.ErrInvalidJudgeCorrect),
 		errors.Is(err, service.ErrInvalidBlankAnswerCount),
 		errors.Is(err, service.ErrInvalidBlankAnswer),
-		errors.Is(err, service.ErrInvalidOptionContent):
+		errors.Is(err, service.ErrInvalidOptionContent),
+		errors.Is(err, service.ErrCategoryNameEmpty),
+		errors.Is(err, service.ErrCategoryParentInvalid),
+		errors.Is(err, service.ErrTagNameEmpty):
 		c.JSON(http.StatusBadRequest, gin.H{"message": err.Error()})
 	default:
 		h.log.Error("service error", "error", err.Error())

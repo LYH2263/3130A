@@ -34,10 +34,12 @@ func main() {
 
 	tokens := auth.NewTokenManager(cfg.JWTSecret)
 	authSvc := service.NewAuthService(db, tokens, log)
+	categorySvc := service.NewCategoryService(db, log)
+	tagSvc := service.NewTagService(db, log)
 	questionSvc := service.NewQuestionService(db, log)
 	attemptSvc := service.NewAttemptService(db, log)
 
-	h := handler.New(authSvc, questionSvc, attemptSvc, tokens, log)
+	h := handler.New(authSvc, categorySvc, tagSvc, questionSvc, attemptSvc, tokens, log)
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,
 		Handler:           h.Router(),

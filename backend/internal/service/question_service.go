@@ -39,13 +39,109 @@ func NewQuestionService(db *gorm.DB, log *slog.Logger) *QuestionService {
 
 func (s *QuestionService) ListQuestions() ([]models.Question, error) {
 	var questions []models.Question
-	if err := s.db.Preload("Options").Preload("BlankAnswers").Order("id desc").Find(&questions).Error; err != nil {
+	if err := s.db.Preload("Options").Preload("BlankAnswers").Preload("Tags").Preload("Category").Order("id desc").Find(&questions).Error; err != nil {
 		return nil, fmt.Errorf("list questions: %w", err)
 	}
 	return questions, nil
 }
 
-func (s *QuestionService) CreateQuestion(input dto.QuestionInput, createdBy uint) (*models.Question, error) {
+func (s *QuestionService) GetQuestion(id uint) (*models.Question, error) {
+	var question models.Question
+	if err := s.db.Preload("Options").Preload("BlankAnswers").Preload("Tags").Preload("Category").First(&question, id).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, ErrQuestionNotFound
+		}
+		return nil, fmt.Errorf("get question: %w", err)
+	}
+	return &question, nil
+}
+
+func (s *QuestionService) QueryQuestions(query dto.QuestionQuery, categorySvc *CategoryService) (*dto.PaginatedQuestions, error) {
+	db := s.db.Model(&models.Question{})
+
+	if query.Keyword != "" {
+		keyword := "%" + query.Keyword + "%"
+		db = db.Where("title LIKE ? OR description LIKE ?", keyword, keyword)
+	}
+
+	if query.CategoryID != nil {
+		categoryIDs, err := categorySvc.GetDescendantIDs(*query.CategoryID)
+		if err != nil {
+			return nil, fmt.Errorf("get category descendants: %w", err)
+		}
+		db = db.Where("category_id IN ?", categoryIDs)
+	}
+
+	if len(query.TagIDs) > 0 {
+		subQuery := s.db.Table("question_tags").
+			Select("question_id").
+			Where("tag_id IN ?", query.TagIDs).
+			Group("question_id")
+
+		tagMode := query.TagMode
+		if tagMode == "" {
+			tagMode = "or"
+		}
+		if tagMode == "and" {
+			subQuery = subQuery.Having("COUNT(DISTINCT tag_id) = ?", len(query.TagIDs))
+		}
+
+		db = db.Where("id IN (?)", subQuery)
+	}
+
+	var total int64
+	if err := db.Count(&total).Error; err != nil {
+		return nil, fmt.Errorf("count questions: %w", err)
+	}
+
+	page := query.Page
+	if page < 1 {
+		page = 1
+	}
+	pageSize := query.PageSize
+	if pageSize < 1 || pageSize > 100 {
+		pageSize = 20
+	}
+	offset := (page - 1) * pageSize
+
+	var questions []models.Question
+	if err := db.Preload("Category").Preload("Tags").
+		Order("id desc").
+		Limit(pageSize).
+		Offset(offset).
+		Find(&questions).Error; err != nil {
+		return nil, fmt.Errorf("query questions: %w", err)
+	}
+
+	items := make([]dto.QuestionDetail, 0, len(questions))
+	for _, q := range questions {
+		categoryName := ""
+		if q.Category != nil {
+			categoryName = q.Category.Name
+		}
+		items = append(items, dto.QuestionDetail{
+			ID:            q.ID,
+			Type:          q.Type,
+			Title:         q.Title,
+			Description:   q.Description,
+			CategoryID:    q.CategoryID,
+			CategoryName:  categoryName,
+			CreatedBy:     q.CreatedBy,
+			MultipleScore: q.MultipleScore,
+			CreatedAt:     q.CreatedAt.Format("2006-01-02 15:04:05"),
+			UpdatedAt:     q.UpdatedAt.Format("2006-01-02 15:04:05"),
+		})
+	}
+
+	return &dto.PaginatedQuestions{
+		Items:    items,
+		Total:    total,
+		Page:     page,
+		PageSize: pageSize,
+	}, nil
+}
+
+func (s *QuestionService) CreateQuestion(input dto.QuestionInput, createdBy uint, tagSvc *TagService) (*models.Question, error) {
 	if err := validateQuestionInput(input); err != nil {
 		return nil, err
 	}
@@ -54,6 +150,7 @@ func (s *QuestionService) CreateQuestion(input dto.QuestionInput, createdBy uint
 		Type:          strings.TrimSpace(input.Type),
 		Title:         strings.TrimSpace(input.Title),
 		Description:   strings.TrimSpace(input.Description),
+		CategoryID:    input.CategoryID,
 		CreatedBy:     createdBy,
 		MultipleScore: strings.TrimSpace(input.MultipleScore),
 	}
@@ -68,11 +165,37 @@ func (s *QuestionService) CreateQuestion(input dto.QuestionInput, createdBy uint
 		question.Options = toOptionModels(input.Options)
 	}
 
-	if err := s.db.Create(&question).Error; err != nil {
-		return nil, fmt.Errorf("create question: %w", err)
+	if err := s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&question).Error; err != nil {
+			return fmt.Errorf("create question: %w", err)
+		}
+
+		if len(input.TagNames) > 0 && tagSvc != nil {
+			var tags []models.Tag
+			for _, name := range input.TagNames {
+				name = strings.TrimSpace(name)
+				if name == "" {
+					continue
+				}
+				tag, err := tagSvc.GetOrCreateTag(name)
+				if err != nil {
+					return fmt.Errorf("get or create tag: %w", err)
+				}
+				tags = append(tags, *tag)
+			}
+			if len(tags) > 0 {
+				if err := tx.Model(&question).Association("Tags").Append(tags); err != nil {
+					return fmt.Errorf("associate tags: %w", err)
+				}
+			}
+		}
+
+		return nil
+	}); err != nil {
+		return nil, err
 	}
 
-	if err := s.db.Preload("Options").Preload("BlankAnswers").First(&question, question.ID).Error; err != nil {
+	if err := s.db.Preload("Options").Preload("BlankAnswers").Preload("Tags").Preload("Category").First(&question, question.ID).Error; err != nil {
 		return nil, fmt.Errorf("reload question: %w", err)
 	}
 
@@ -80,7 +203,7 @@ func (s *QuestionService) CreateQuestion(input dto.QuestionInput, createdBy uint
 	return &question, nil
 }
 
-func (s *QuestionService) UpdateQuestion(questionID uint, input dto.QuestionInput) (*models.Question, error) {
+func (s *QuestionService) UpdateQuestion(questionID uint, input dto.QuestionInput, tagSvc *TagService) (*models.Question, error) {
 	if err := validateQuestionInput(input); err != nil {
 		return nil, err
 	}
@@ -96,6 +219,7 @@ func (s *QuestionService) UpdateQuestion(questionID uint, input dto.QuestionInpu
 	question.Type = strings.TrimSpace(input.Type)
 	question.Title = strings.TrimSpace(input.Title)
 	question.Description = strings.TrimSpace(input.Description)
+	question.CategoryID = input.CategoryID
 	question.MultipleScore = strings.TrimSpace(input.MultipleScore)
 	if question.MultipleScore == "" {
 		question.MultipleScore = models.MultipleScoringAllOrNothing
@@ -106,6 +230,7 @@ func (s *QuestionService) UpdateQuestion(questionID uint, input dto.QuestionInpu
 			"type":           question.Type,
 			"title":          question.Title,
 			"description":    question.Description,
+			"category_id":    question.CategoryID,
 			"multiple_score": question.MultipleScore,
 		}).Error; err != nil {
 			return err
@@ -136,12 +261,37 @@ func (s *QuestionService) UpdateQuestion(questionID uint, input dto.QuestionInpu
 			}
 		}
 
+		if tagSvc != nil {
+			if err := tx.Model(&question).Association("Tags").Clear(); err != nil {
+				return fmt.Errorf("clear tags: %w", err)
+			}
+			if len(input.TagNames) > 0 {
+				var tags []models.Tag
+				for _, name := range input.TagNames {
+					name = strings.TrimSpace(name)
+					if name == "" {
+						continue
+					}
+					tag, err := tagSvc.GetOrCreateTag(name)
+					if err != nil {
+						return fmt.Errorf("get or create tag: %w", err)
+					}
+					tags = append(tags, *tag)
+				}
+				if len(tags) > 0 {
+					if err := tx.Model(&question).Association("Tags").Append(tags); err != nil {
+						return fmt.Errorf("associate tags: %w", err)
+					}
+				}
+			}
+		}
+
 		return nil
 	}); err != nil {
 		return nil, fmt.Errorf("update question: %w", err)
 	}
 
-	if err := s.db.Preload("Options").Preload("BlankAnswers").First(&question, question.ID).Error; err != nil {
+	if err := s.db.Preload("Options").Preload("BlankAnswers").Preload("Tags").Preload("Category").First(&question, question.ID).Error; err != nil {
 		return nil, fmt.Errorf("reload question: %w", err)
 	}
 	return &question, nil
@@ -153,6 +303,9 @@ func (s *QuestionService) DeleteQuestion(questionID uint) error {
 			return err
 		}
 		if err := tx.Where("question_id = ?", questionID).Delete(&models.BlankAnswer{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("question_id = ?", questionID).Delete(&models.QuestionTag{}).Error; err != nil {
 			return err
 		}
 		res := tx.Delete(&models.Question{}, questionID)

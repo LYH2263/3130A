@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   QUESTION_TYPES,
   QUESTION_TYPE_LABELS,
@@ -15,6 +15,8 @@ function getDefaultState(type) {
         type,
         title: '',
         description: '',
+        categoryId: null,
+        tagNames: [],
         options: [
           { content: '', isCorrect: true },
           { content: '', isCorrect: false },
@@ -27,6 +29,8 @@ function getDefaultState(type) {
         type,
         title: '',
         description: '',
+        categoryId: null,
+        tagNames: [],
         options: [
           { content: '', isCorrect: true },
           { content: '', isCorrect: true },
@@ -40,6 +44,8 @@ function getDefaultState(type) {
         type,
         title: '',
         description: '',
+        categoryId: null,
+        tagNames: [],
         options: [
           { content: '正确', isCorrect: true },
           { content: '错误', isCorrect: false },
@@ -52,6 +58,8 @@ function getDefaultState(type) {
         type,
         title: '',
         description: '',
+        categoryId: null,
+        tagNames: [],
         options: [],
         blankAnswers: [{ answer: '', matchMode: BLANK_MATCH_MODES.EXACT }],
         multipleScore: MULTIPLE_SCORING_MODES.ALL_OR_NOTHING,
@@ -61,6 +69,8 @@ function getDefaultState(type) {
         type: QUESTION_TYPES.SINGLE,
         title: '',
         description: '',
+        categoryId: null,
+        tagNames: [],
         options: [
           { content: '', isCorrect: true },
           { content: '', isCorrect: false },
@@ -81,6 +91,8 @@ function buildInitialState(data) {
     type,
     title: data.title || '',
     description: data.description || '',
+    categoryId: data.categoryId || null,
+    tagNames: data.tags ? data.tags.map((t) => t.name) : [],
     options:
       data.options?.map((item) => ({
         id: item.id,
@@ -97,7 +109,173 @@ function buildInitialState(data) {
   };
 }
 
-export function QuestionEditorModal({ open, initialData, onClose, onSubmit, loading }) {
+function CategorySelect({ categories, value, onChange }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const dropdownRef = useRef(null);
+
+  useEffect(() => {
+    function handleClickOutside(e) {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target)) {
+        setIsOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const selectedCategory = categories.find((c) => c.id === value);
+
+  return (
+    <div className="form-control">
+      <span className="label-text mb-1 text-sm font-medium">分类（可选）</span>
+      <div className="relative" ref={dropdownRef}>
+        <button
+          type="button"
+          className="select select-bordered w-full text-left"
+          onClick={() => setIsOpen(!isOpen)}
+        >
+          {selectedCategory ? selectedCategory.name : '请选择分类'}
+        </button>
+        {isOpen && (
+          <div className="absolute z-10 mt-1 max-h-64 w-full overflow-auto rounded-lg border border-slate-200 bg-white shadow-lg">
+            <button
+              type="button"
+              className={`w-full px-3 py-2 text-left text-sm hover:bg-slate-100 ${
+                !value ? 'bg-sky-50 text-sky-700' : 'text-slate-700'
+              }`}
+              onClick={() => {
+                onChange(null);
+                setIsOpen(false);
+              }}
+            >
+              不分类
+            </button>
+            {categories.map((cat) => (
+              <button
+                key={cat.id}
+                type="button"
+                className={`w-full px-3 py-2 text-left text-sm hover:bg-slate-100 ${
+                  value === cat.id ? 'bg-sky-50 text-sky-700' : 'text-slate-700'
+                }`}
+                onClick={() => {
+                  onChange(cat.id);
+                  setIsOpen(false);
+                }}
+              >
+                {cat.name}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function TagInput({ tags, availableTags, onTagsChange }) {
+  const [inputValue, setInputValue] = useState('');
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const inputRef = useRef(null);
+  const containerRef = useRef(null);
+
+  useEffect(() => {
+    function handleClickOutside(e) {
+      if (containerRef.current && !containerRef.current.contains(e.target)) {
+        setShowSuggestions(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const suggestions = availableTags
+    .filter((t) => !tags.includes(t.name) && t.name.toLowerCase().includes(inputValue.toLowerCase()))
+    .slice(0, 10);
+
+  const addTag = (name) => {
+    name = name.trim();
+    if (name && !tags.includes(name)) {
+      onTagsChange([...tags, name]);
+    }
+    setInputValue('');
+    setShowSuggestions(false);
+  };
+
+  const removeTag = (name) => {
+    onTagsChange(tags.filter((t) => t !== name));
+  };
+
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (inputValue.trim()) {
+        addTag(inputValue);
+      }
+    } else if (e.key === 'Backspace' && !inputValue && tags.length > 0) {
+      removeTag(tags[tags.length - 1]);
+    }
+  };
+
+  return (
+    <div className="form-control" ref={containerRef}>
+      <span className="label-text mb-1 text-sm font-medium">标签（可新建，回车添加）</span>
+      <div className="flex flex-wrap gap-1.5 rounded-lg border border-slate-300 bg-white p-2 min-h-[42px]">
+        {tags.map((tag) => (
+          <span
+            key={tag}
+            className="badge badge-primary badge-sm gap-1"
+          >
+            {tag}
+            <button
+              type="button"
+              className="ml-1 text-white/80 hover:text-white"
+              onClick={() => removeTag(tag)}
+            >
+              ×
+            </button>
+          </span>
+        ))}
+        <input
+          ref={inputRef}
+          type="text"
+          className="flex-1 min-w-[100px] border-none outline-none bg-transparent text-sm"
+          placeholder={tags.length === 0 ? '输入标签名，回车添加...' : ''}
+          value={inputValue}
+          onChange={(e) => {
+            setInputValue(e.target.value);
+            setShowSuggestions(true);
+          }}
+          onFocus={() => setShowSuggestions(true)}
+          onKeyDown={handleKeyDown}
+        />
+      </div>
+      {showSuggestions && suggestions.length > 0 && (
+        <div className="mt-1 max-h-48 overflow-auto rounded-lg border border-slate-200 bg-white shadow-lg">
+          {suggestions.map((tag) => (
+            <button
+              key={tag.id}
+              type="button"
+              className="w-full px-3 py-1.5 text-left text-sm hover:bg-slate-100 text-slate-700"
+              onClick={() => addTag(tag.name)}
+            >
+              {tag.name}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function QuestionEditorModal({
+  open,
+  initialData,
+  categories = [],
+  tags = [],
+  onClose,
+  onSubmit,
+  loading,
+}) {
   const [form, setForm] = useState(buildInitialState(initialData));
 
   useEffect(() => {
@@ -118,6 +296,8 @@ export function QuestionEditorModal({ open, initialData, onClose, onSubmit, load
       ...defaultState,
       title: prev.title,
       description: prev.description,
+      categoryId: prev.categoryId,
+      tagNames: prev.tagNames,
     }));
   };
 
@@ -188,6 +368,8 @@ export function QuestionEditorModal({ open, initialData, onClose, onSubmit, load
       type: form.type,
       title: form.title,
       description: form.description,
+      categoryId: form.categoryId,
+      tagNames: form.tagNames,
       options: form.options.map((item) => ({
         content: item.content,
         isCorrect: item.isCorrect,
@@ -217,7 +399,7 @@ export function QuestionEditorModal({ open, initialData, onClose, onSubmit, load
 
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-900/50 px-4 py-8">
-      <div className="w-full max-w-2xl rounded-2xl bg-base-100 p-6 shadow-2xl">
+      <div className="w-full max-w-2xl max-h-[90vh] overflow-auto rounded-2xl bg-base-100 p-6 shadow-2xl">
         <div className="mb-4 flex items-center justify-between">
           <h3 className="text-xl font-semibold text-slate-800">
             {initialData ? '编辑题目' : '新增题目'}
@@ -264,6 +446,20 @@ export function QuestionEditorModal({ open, initialData, onClose, onSubmit, load
               }
             />
           </label>
+
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <CategorySelect
+              categories={categories}
+              value={form.categoryId}
+              onChange={(val) => setForm((prev) => ({ ...prev, categoryId: val }))}
+            />
+          </div>
+
+          <TagInput
+            tags={form.tagNames}
+            availableTags={tags}
+            onTagsChange={(val) => setForm((prev) => ({ ...prev, tagNames: val }))}
+          />
 
           {form.type === QUESTION_TYPES.MULTIPLE && (
             <label className="form-control">
