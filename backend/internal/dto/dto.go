@@ -36,12 +36,18 @@ type QuestionInput struct {
 }
 
 type QuestionQuery struct {
-	Keyword    string   `form:"keyword"`
-	CategoryID *uint    `form:"categoryId"`
-	TagIDs     []uint   `form:"tagIds"`
-	TagMode    string   `form:"tagMode" binding:"omitempty,oneof=and or"`
-	Page       int      `form:"page,default=1"`
-	PageSize   int      `form:"pageSize,default=20"`
+	Keyword            string   `form:"keyword"`
+	CategoryID         *uint    `form:"categoryId"`
+	TagIDs             []uint   `form:"tagIds"`
+	TagMode            string   `form:"tagMode" binding:"omitempty,oneof=and or"`
+	CreatedBy          *uint    `form:"createdBy"`
+	CreatedFrom        string   `form:"createdFrom"`
+	CreatedTo          string   `form:"createdTo"`
+	HasAnswerError     *bool    `form:"hasAnswerError"`
+	SortBy             string   `form:"sortBy" binding:"omitempty,oneof=created_at id wrong_count"`
+	SortOrder          string   `form:"sortOrder" binding:"omitempty,oneof=asc desc"`
+	Page               int      `form:"page,default=1"`
+	PageSize           int      `form:"pageSize,default=20"`
 }
 
 type PaginatedQuestions struct {
@@ -59,10 +65,13 @@ type QuestionDetail struct {
 	CategoryID           *uint    `json:"categoryId"`
 	CategoryName         string   `json:"categoryName"`
 	CreatedBy            uint     `json:"createdBy"`
+	CreatedByName        string   `json:"createdByName"`
 	MultipleScore        string   `json:"multipleScore"`
 	ExplanationContent   string   `json:"explanationContent"`
 	ExplanationRefs      string   `json:"explanationRefs"`
 	KnowledgePoints      []KnowledgePointInfo `json:"knowledgePoints"`
+	WrongCount           int64    `json:"wrongCount"`
+	HasAnswerError       bool     `json:"hasAnswerError"`
 	CreatedAt            string   `json:"createdAt"`
 	UpdatedAt            string   `json:"updatedAt"`
 }

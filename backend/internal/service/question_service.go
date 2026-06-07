@@ -60,8 +60,8 @@ func (s *QuestionService) QueryQuestions(query dto.QuestionQuery, categorySvc *C
 	db := s.db.Model(&models.Question{})
 
 	if query.Keyword != "" {
-		keyword := "%" + query.Keyword + "%"
-		db = db.Where("title LIKE ? OR description LIKE ?", keyword, keyword)
+		keyword := "%" + strings.ReplaceAll(query.Keyword, "%", "\\%") + "%"
+		db = db.Where("questions.title LIKE ? OR questions.description LIKE ?", keyword, keyword)
 	}
 
 	if query.CategoryID != nil {
@@ -69,7 +69,7 @@ func (s *QuestionService) QueryQuestions(query dto.QuestionQuery, categorySvc *C
 		if err != nil {
 			return nil, fmt.Errorf("get category descendants: %w", err)
 		}
-		db = db.Where("category_id IN ?", categoryIDs)
+		db = db.Where("questions.category_id IN ?", categoryIDs)
 	}
 
 	if len(query.TagIDs) > 0 {
@@ -86,7 +86,83 @@ func (s *QuestionService) QueryQuestions(query dto.QuestionQuery, categorySvc *C
 			subQuery = subQuery.Having("COUNT(DISTINCT tag_id) = ?", len(query.TagIDs))
 		}
 
-		db = db.Where("id IN (?)", subQuery)
+		db = db.Where("questions.id IN (?)", subQuery)
+	}
+
+	if query.CreatedBy != nil {
+		db = db.Where("questions.created_by = ?", *query.CreatedBy)
+	}
+
+	if query.CreatedFrom != "" {
+		if t, err := time.Parse("2006-01-02", query.CreatedFrom); err == nil {
+			db = db.Where("questions.created_at >= ?", t)
+		}
+	}
+
+	if query.CreatedTo != "" {
+		if t, err := time.Parse("2006-01-02", query.CreatedTo); err == nil {
+			endOfDay := t.Add(24 * time.Hour).Add(-time.Second)
+			db = db.Where("questions.created_at <= ?", endOfDay)
+		}
+	}
+
+	wrongCountSubQuery := s.db.Table("attempt_answers").
+		Select("COUNT(*)").
+		Where("attempt_answers.question_id = questions.id AND attempt_answers.is_correct = ?", false)
+
+	if query.HasAnswerError != nil {
+		if *query.HasAnswerError {
+			db = db.Where(`(
+				(questions.type = ? AND (
+					SELECT COUNT(*) FROM question_options 
+					WHERE question_options.question_id = questions.id 
+					AND question_options.is_correct = ?
+				) != 1)
+				OR (questions.type = ? AND (
+					SELECT COUNT(*) FROM question_options 
+					WHERE question_options.question_id = questions.id 
+					AND question_options.is_correct = ?
+				) < 2)
+				OR (questions.type = ? AND (
+					SELECT COUNT(*) FROM blank_answers 
+					WHERE blank_answers.question_id = questions.id
+				) < 1)
+				OR (questions.type = ? AND (
+					SELECT COUNT(*) FROM question_options 
+					WHERE question_options.question_id = questions.id 
+					AND question_options.is_correct = ?
+				) != 1)
+				OR (questions.type = ? AND (
+					SELECT COUNT(*) FROM question_options 
+					WHERE question_options.question_id = questions.id
+				) != 2)
+			)`, models.QuestionTypeSingle, true, models.QuestionTypeMultiple, true, models.QuestionTypeBlank, models.QuestionTypeJudge, true, models.QuestionTypeJudge)
+		} else {
+			db = db.Where(`(
+				(questions.type = ? AND (
+					SELECT COUNT(*) FROM question_options 
+					WHERE question_options.question_id = questions.id 
+					AND question_options.is_correct = ?
+				) = 1)
+				OR (questions.type = ? AND (
+					SELECT COUNT(*) FROM question_options 
+					WHERE question_options.question_id = questions.id 
+					AND question_options.is_correct = ?
+				) >= 2)
+				OR (questions.type = ? AND (
+					SELECT COUNT(*) FROM blank_answers 
+					WHERE blank_answers.question_id = questions.id
+				) >= 1)
+				OR (questions.type = ? AND (
+					SELECT COUNT(*) FROM question_options 
+					WHERE question_options.question_id = questions.id 
+					AND question_options.is_correct = ?
+				) = 1 AND (
+					SELECT COUNT(*) FROM question_options 
+					WHERE question_options.question_id = questions.id
+				) = 2)
+			)`, models.QuestionTypeSingle, true, models.QuestionTypeMultiple, true, models.QuestionTypeBlank, models.QuestionTypeJudge, true)
+		}
 	}
 
 	var total int64
@@ -104,13 +180,60 @@ func (s *QuestionService) QueryQuestions(query dto.QuestionQuery, categorySvc *C
 	}
 	offset := (page - 1) * pageSize
 
-	var questions []models.Question
-	if err := db.Preload("Category").Preload("Tags").Preload("KnowledgePoints").Preload("Explanation").
-		Order("id desc").
-		Limit(pageSize).
-		Offset(offset).
-		Find(&questions).Error; err != nil {
+	sortBy := query.SortBy
+	if sortBy == "" {
+		sortBy = "id"
+	}
+	sortOrder := query.SortOrder
+	if sortOrder == "" {
+		sortOrder = "desc"
+	}
+
+	var orderClause string
+	switch sortBy {
+	case "created_at":
+		orderClause = "questions.created_at " + sortOrder
+	case "wrong_count":
+		orderClause = "wrong_count " + sortOrder + ", questions.id desc"
+	default:
+		orderClause = "questions.id " + sortOrder
+	}
+
+	type questionWithWrongCount struct {
+		models.Question
+		WrongCount int64 `gorm:"column:wrong_count"`
+	}
+
+	var questions []questionWithWrongCount
+	queryBuilder := db.Select("questions.*, (?) as wrong_count", wrongCountSubQuery).
+		Preload("Category").Preload("Tags").Preload("KnowledgePoints").Preload("Explanation").
+		Preload("Options").Preload("BlankAnswers")
+
+	if sortBy == "wrong_count" {
+		queryBuilder = queryBuilder.Order(orderClause)
+	} else {
+		queryBuilder = queryBuilder.Order(orderClause)
+	}
+
+	if err := queryBuilder.Limit(pageSize).Offset(offset).Find(&questions).Error; err != nil {
 		return nil, fmt.Errorf("query questions: %w", err)
+	}
+
+	creatorIDs := make([]uint, 0, len(questions))
+	for _, q := range questions {
+		if q.CreatedBy > 0 {
+			creatorIDs = append(creatorIDs, q.CreatedBy)
+		}
+	}
+
+	creatorMap := make(map[uint]string)
+	if len(creatorIDs) > 0 {
+		var users []models.User
+		if err := s.db.Where("id IN ?", creatorIDs).Find(&users).Error; err == nil {
+			for _, u := range users {
+				creatorMap[u.ID] = u.Username
+			}
+		}
 	}
 
 	items := make([]dto.QuestionDetail, 0, len(questions))
@@ -125,6 +248,37 @@ func (s *QuestionService) QueryQuestions(query dto.QuestionQuery, categorySvc *C
 			expContent = q.Explanation.Content
 			expRefs = q.Explanation.References
 		}
+
+		hasError := false
+		switch q.Type {
+		case models.QuestionTypeSingle:
+			correctCount := 0
+			for _, opt := range q.Options {
+				if opt.IsCorrect {
+					correctCount++
+				}
+			}
+			hasError = correctCount != 1
+		case models.QuestionTypeMultiple:
+			correctCount := 0
+			for _, opt := range q.Options {
+				if opt.IsCorrect {
+					correctCount++
+				}
+			}
+			hasError = correctCount < 2
+		case models.QuestionTypeJudge:
+			correctCount := 0
+			for _, opt := range q.Options {
+				if opt.IsCorrect {
+					correctCount++
+				}
+			}
+			hasError = correctCount != 1 || len(q.Options) != 2
+		case models.QuestionTypeBlank:
+			hasError = len(q.BlankAnswers) < 1
+		}
+
 		items = append(items, dto.QuestionDetail{
 			ID:                 q.ID,
 			Type:               q.Type,
@@ -133,10 +287,13 @@ func (s *QuestionService) QueryQuestions(query dto.QuestionQuery, categorySvc *C
 			CategoryID:         q.CategoryID,
 			CategoryName:       categoryName,
 			CreatedBy:          q.CreatedBy,
+			CreatedByName:      creatorMap[q.CreatedBy],
 			MultipleScore:      q.MultipleScore,
 			ExplanationContent: expContent,
 			ExplanationRefs:    expRefs,
 			KnowledgePoints:    toKnowledgePointInfos(q.KnowledgePoints),
+			WrongCount:         q.WrongCount,
+			HasAnswerError:     hasError,
 			CreatedAt:          q.CreatedAt.Format("2006-01-02 15:04:05"),
 			UpdatedAt:          q.UpdatedAt.Format("2006-01-02 15:04:05"),
 		})

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'react-hot-toast';
 
 import {
@@ -101,6 +101,16 @@ export function TeacherDashboard({ user, token, onLogout }) {
   const [keyword, setKeyword] = useState('');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
+  const [questionsLoading, setQuestionsLoading] = useState(false);
+  const [showAdvancedFilter, setShowAdvancedFilter] = useState(false);
+  const [createdFrom, setCreatedFrom] = useState('');
+  const [createdTo, setCreatedTo] = useState('');
+  const [sortBy, setSortBy] = useState('id');
+  const [sortOrder, setSortOrder] = useState('desc');
+  const [hasAnswerError, setHasAnswerError] = useState('');
+  const [createdBy, setCreatedBy] = useState('');
+  const tableContainerRef = useRef(null);
+  const scrollPositionRef = useRef(0);
 
   const topStats = useMemo(() => stats.slice(0, 12), [stats]);
 
@@ -132,6 +142,10 @@ export function TeacherDashboard({ user, token, onLogout }) {
   };
 
   const loadQuestions = async () => {
+    if (tableContainerRef.current) {
+      scrollPositionRef.current = tableContainerRef.current.scrollTop;
+    }
+    setQuestionsLoading(true);
     try {
       const params = {
         keyword: keyword || undefined,
@@ -140,12 +154,33 @@ export function TeacherDashboard({ user, token, onLogout }) {
         tagMode,
         page,
         pageSize,
+        sortBy,
+        sortOrder,
       };
+      if (createdBy) {
+        params.createdBy = createdBy;
+      }
+      if (createdFrom) {
+        params.createdFrom = createdFrom;
+      }
+      if (createdTo) {
+        params.createdTo = createdTo;
+      }
+      if (hasAnswerError !== '') {
+        params.hasAnswerError = hasAnswerError === 'true';
+      }
       const result = await fetchQuestions(token, params);
       setQuestions(result.items || []);
       setTotalQuestions(result.total || 0);
     } catch (error) {
       toast.error(error.message || '加载题目失败');
+    } finally {
+      setQuestionsLoading(false);
+      requestAnimationFrame(() => {
+        if (tableContainerRef.current) {
+          tableContainerRef.current.scrollTop = scrollPositionRef.current;
+        }
+      });
     }
   };
 
@@ -159,7 +194,7 @@ export function TeacherDashboard({ user, token, onLogout }) {
       loadQuestions();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedCategoryId, selectedTagIds, tagMode, keyword, page, pageSize, loading]);
+  }, [selectedCategoryId, selectedTagIds, tagMode, keyword, page, pageSize, loading, sortBy, sortOrder, createdFrom, createdTo, hasAnswerError, createdBy]);
 
   const handleToggleCategory = (id) => {
     setExpandedCategoryIds((prev) =>
@@ -382,6 +417,12 @@ export function TeacherDashboard({ user, token, onLogout }) {
                     setKeyword('');
                     setSelectedTagIds([]);
                     setSelectedCategoryId(null);
+                    setCreatedFrom('');
+                    setCreatedTo('');
+                    setHasAnswerError('');
+                    setCreatedBy('');
+                    setSortBy('id');
+                    setSortOrder('desc');
                     setPage(1);
                   }}
                 >
@@ -436,7 +477,115 @@ export function TeacherDashboard({ user, token, onLogout }) {
                 </div>
               )}
 
-              <div className="max-h-[400px] overflow-auto rounded-xl border border-slate-200">
+              <div className="mb-3">
+                <button
+                  type="button"
+                  className="btn btn-xs btn-ghost text-sky-600"
+                  onClick={() => setShowAdvancedFilter((v) => !v)}
+                >
+                  {showAdvancedFilter ? '收起高级筛选' : '展开高级筛选'}
+                  <svg
+                    className={`ml-1 h-3 w-3 transition-transform ${showAdvancedFilter ? 'rotate-180' : ''}`}
+                    viewBox="0 0 12 12"
+                    fill="currentColor"
+                  >
+                    <path d="M4 2l4 4-4 4V2z" />
+                  </svg>
+                </button>
+              </div>
+
+              {showAdvancedFilter && (
+                <div className="mb-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
+                  <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
+                    <div>
+                      <label className="text-xs text-slate-500 mb-1 block">创建时间从</label>
+                      <input
+                        type="date"
+                        className="input input-bordered input-sm w-full"
+                        value={createdFrom}
+                        onChange={(e) => {
+                          setCreatedFrom(e.target.value);
+                          setPage(1);
+                        }}
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-slate-500 mb-1 block">创建时间至</label>
+                      <input
+                        type="date"
+                        className="input input-bordered input-sm w-full"
+                        value={createdTo}
+                        onChange={(e) => {
+                          setCreatedTo(e.target.value);
+                          setPage(1);
+                        }}
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-slate-500 mb-1 block">创建者ID</label>
+                      <input
+                        type="text"
+                        className="input input-bordered input-sm w-full"
+                        placeholder="输入用户ID"
+                        value={createdBy}
+                        onChange={(e) => {
+                          setCreatedBy(e.target.value);
+                          setPage(1);
+                        }}
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-slate-500 mb-1 block">答案异常</label>
+                      <select
+                        className="select select-bordered select-sm w-full"
+                        value={hasAnswerError}
+                        onChange={(e) => {
+                          setHasAnswerError(e.target.value);
+                          setPage(1);
+                        }}
+                      >
+                        <option value="">全部</option>
+                        <option value="true">仅异常</option>
+                        <option value="false">仅正常</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="mt-3 flex items-center gap-3">
+                    <span className="text-xs text-slate-500">排序：</span>
+                    <select
+                      className="select select-bordered select-xs"
+                      value={sortBy}
+                      onChange={(e) => {
+                        setSortBy(e.target.value);
+                        setPage(1);
+                      }}
+                    >
+                      <option value="id">题目ID</option>
+                      <option value="created_at">创建时间</option>
+                      <option value="wrong_count">被错次数</option>
+                    </select>
+                    <select
+                      className="select select-bordered select-xs"
+                      value={sortOrder}
+                      onChange={(e) => {
+                        setSortOrder(e.target.value);
+                        setPage(1);
+                      }}
+                    >
+                      <option value="desc">降序</option>
+                      <option value="asc">升序</option>
+                    </select>
+                  </div>
+                </div>
+              )}
+
+              <div ref={tableContainerRef} className="max-h-[400px] overflow-auto rounded-xl border border-slate-200 relative" id="questionTableContainer">
+                {questionsLoading && (
+                  <div className="absolute inset-0 z-10 flex items-center justify-center bg-white/70 backdrop-blur-sm">
+                    <span className="loading loading-spinner loading-md text-sky-600"></span>
+                  </div>
+                )}
                 <table className="table table-sm">
                   <thead>
                     <tr>
@@ -444,6 +593,9 @@ export function TeacherDashboard({ user, token, onLogout }) {
                       <th>题型</th>
                       <th>分类</th>
                       <th>题干</th>
+                      <th>创建者</th>
+                      <th>被错次数</th>
+                      <th>状态</th>
                       <th>操作</th>
                     </tr>
                   </thead>
@@ -461,6 +613,25 @@ export function TeacherDashboard({ user, token, onLogout }) {
                         </td>
                         <td className="max-w-sm truncate" title={question.title}>
                           {question.title}
+                        </td>
+                        <td className="text-xs text-slate-500">
+                          {question.createdByName || question.createdBy || '-'}
+                        </td>
+                        <td>
+                          <span className="badge badge-sm badge-outline">
+                            {question.wrongCount ?? 0}
+                          </span>
+                        </td>
+                        <td>
+                          {question.hasAnswerError ? (
+                            <span className="badge badge-sm badge-error" title="正确答案配置异常">
+                              异常
+                            </span>
+                          ) : (
+                            <span className="badge badge-sm badge-success badge-outline">
+                              正常
+                            </span>
+                          )}
                         </td>
                         <td>
                           <div className="flex gap-1">
@@ -480,9 +651,9 @@ export function TeacherDashboard({ user, token, onLogout }) {
                         </td>
                       </tr>
                     ))}
-                    {!questions.length ? (
+                    {!questions.length && !questionsLoading ? (
                       <tr>
-                        <td colSpan={5} className="text-center text-slate-500 py-8">
+                        <td colSpan={8} className="text-center text-slate-500 py-8">
                           当前没有题目，请先新增或上传题库。
                         </td>
                       </tr>
@@ -491,42 +662,42 @@ export function TeacherDashboard({ user, token, onLogout }) {
                 </table>
               </div>
 
-              {totalPages > 1 && (
-                <div className="mt-3 flex items-center justify-between">
-                  <div className="text-xs text-slate-500">
-                    共 {totalQuestions} 题，第 {page}/{totalPages} 页
-                  </div>
-                  <div className="flex gap-1">
-                    <button
-                      className="btn btn-xs btn-outline"
-                      onClick={() => setPage((p) => Math.max(1, p - 1))}
-                      disabled={page <= 1}
-                    >
-                      上一页
-                    </button>
-                    <button
-                      className="btn btn-xs btn-outline"
-                      onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                      disabled={page >= totalPages}
-                    >
-                      下一页
-                    </button>
-                    <select
-                      className="select select-bordered select-xs w-20"
-                      value={pageSize}
-                      onChange={(e) => {
-                        setPageSize(Number(e.target.value));
-                        setPage(1);
-                      }}
-                    >
-                      <option value={10}>10/页</option>
-                      <option value={20}>20/页</option>
-                      <option value={50}>50/页</option>
-                      <option value={100}>100/页</option>
-                    </select>
-                  </div>
+              <div className="mt-3 flex items-center justify-between">
+                <div className="text-xs text-slate-500">
+                  共 {totalQuestions} 题，第 {page}/{totalPages || 1} 页
                 </div>
-              )}
+                <div className="flex gap-1 items-center">
+                  <button
+                    className="btn btn-xs btn-outline"
+                    onClick={() => setPage((p) => Math.max(1, p - 1))}
+                    disabled={page <= 1 || questionsLoading}
+                  >
+                    上一页
+                  </button>
+                  <span className="text-xs text-slate-500 px-1">{page}</span>
+                  <button
+                    className="btn btn-xs btn-outline"
+                    onClick={() => setPage((p) => Math.min(totalPages || 1, p + 1))}
+                    disabled={page >= totalPages || questionsLoading}
+                  >
+                    下一页
+                  </button>
+                  <select
+                    className="select select-bordered select-xs w-20"
+                    value={pageSize}
+                    onChange={(e) => {
+                      setPageSize(Number(e.target.value));
+                      setPage(1);
+                    }}
+                    disabled={questionsLoading}
+                  >
+                    <option value={10}>10/页</option>
+                    <option value={20}>20/页</option>
+                    <option value={50}>50/页</option>
+                    <option value={100}>100/页</option>
+                  </select>
+                </div>
+              </div>
             </article>
           </section>
 

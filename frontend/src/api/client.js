@@ -97,6 +97,14 @@ export async function fetchQuestions(token, params = {}) {
     params.tagIds.forEach((id) => query.append('tagIds', id));
   }
   if (params.tagMode) query.append('tagMode', params.tagMode);
+  if (params.createdBy) query.append('createdBy', params.createdBy);
+  if (params.createdFrom) query.append('createdFrom', params.createdFrom);
+  if (params.createdTo) query.append('createdTo', params.createdTo);
+  if (params.hasAnswerError !== undefined && params.hasAnswerError !== null) {
+    query.append('hasAnswerError', params.hasAnswerError);
+  }
+  if (params.sortBy) query.append('sortBy', params.sortBy);
+  if (params.sortOrder) query.append('sortOrder', params.sortOrder);
   if (params.page) query.append('page', params.page);
   if (params.pageSize) query.append('pageSize', params.pageSize);
 
