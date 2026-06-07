@@ -4,7 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
+	"regexp"
 	"sort"
+	"strings"
 
 	"gorm.io/gorm"
 
@@ -18,10 +21,11 @@ type AttemptService struct {
 }
 
 type SubmitResult struct {
-	AttemptID uint   `json:"attemptId"`
-	Score     int    `json:"score"`
-	Total     int    `json:"total"`
-	Rate      string `json:"rate"`
+	AttemptID uint             `json:"attemptId"`
+	Score     int              `json:"score"`
+	Total     int              `json:"total"`
+	Rate      string           `json:"rate"`
+	Details   []dto.AnswerDetail `json:"details"`
 }
 
 type StudentMistake struct {
@@ -29,6 +33,7 @@ type StudentMistake struct {
 	Title         string `json:"title"`
 	WrongCount    int64  `json:"wrongCount"`
 	CorrectOption string `json:"correctOption"`
+	Type          string `json:"type"`
 }
 
 type ClassWrongStat struct {
@@ -37,6 +42,7 @@ type ClassWrongStat struct {
 	QuestionID uint   `json:"questionId"`
 	Question   string `json:"question"`
 	WrongCount int64  `json:"wrongCount"`
+	Type       string `json:"type"`
 }
 
 type RecentAttempt struct {
@@ -66,7 +72,7 @@ func (s *AttemptService) Submit(userID uint, classID uint, req dto.SubmitRequest
 
 	questionIDs := uniqueQuestionIDs(req.Answers)
 	var questions []models.Question
-	if err := s.db.Preload("Options").Where("id IN ?", questionIDs).Find(&questions).Error; err != nil {
+	if err := s.db.Preload("Options").Preload("BlankAnswers").Where("id IN ?", questionIDs).Find(&questions).Error; err != nil {
 		return nil, fmt.Errorf("load questions: %w", err)
 	}
 	if len(questions) == 0 {
@@ -78,8 +84,15 @@ func (s *AttemptService) Submit(userID uint, classID uint, req dto.SubmitRequest
 		questionMap[q.ID] = q
 	}
 
+	answerMap := make(map[uint]dto.SubmitAnswerItem, len(req.Answers))
+	for _, ans := range req.Answers {
+		answerMap[ans.QuestionID] = ans
+	}
+
 	answersModel := make([]models.AttemptAnswer, 0, len(req.Answers))
-	score := 0
+	details := make([]dto.AnswerDetail, 0, len(req.Answers))
+	totalScore := 0
+	totalMaxScore := 0
 
 	for _, answer := range req.Answers {
 		question, ok := questionMap[answer.QuestionID]
@@ -87,47 +100,196 @@ func (s *AttemptService) Submit(userID uint, classID uint, req dto.SubmitRequest
 			return nil, ErrInvalidSubmission
 		}
 
-		selectedValid := false
-		correct := false
-		for _, opt := range question.Options {
-			if opt.ID == answer.OptionID {
-				selectedValid = true
-				if opt.IsCorrect {
-					correct = true
-				}
-				break
-			}
-		}
-		if !selectedValid {
-			return nil, ErrInvalidSubmission
-		}
-		if correct {
-			score++
+		score, maxScore, isCorrect := gradeQuestion(question, answer)
+
+		totalScore += score
+		totalMaxScore += maxScore
+
+		ansModel := models.AttemptAnswer{
+			QuestionID:   answer.QuestionID,
+			QuestionType: question.Type,
+			IsCorrect:    isCorrect,
+			Score:        score,
+			MaxScore:     maxScore,
 		}
 
-		answersModel = append(answersModel, models.AttemptAnswer{
-			QuestionID:       answer.QuestionID,
-			SelectedOptionID: answer.OptionID,
-			IsCorrect:        correct,
+		switch question.Type {
+		case models.QuestionTypeSingle, models.QuestionTypeJudge:
+			ansModel.SelectedOptionID = answer.OptionID
+		case models.QuestionTypeMultiple:
+			ansModel.SelectedOptionIDs = models.UintArray(answer.OptionIDs)
+		case models.QuestionTypeBlank:
+			ansModel.BlankAnswer = answer.BlankAnswer
+		}
+
+		answersModel = append(answersModel, ansModel)
+		details = append(details, dto.AnswerDetail{
+			QuestionID: answer.QuestionID,
+			Score:      score,
+			MaxScore:   maxScore,
+			IsCorrect:  isCorrect,
+			Type:       question.Type,
 		})
 	}
 
-	total := len(req.Answers)
 	attempt := models.Attempt{
 		UserID:  userID,
 		ClassID: classID,
-		Score:   score,
-		Total:   total,
+		Score:   totalScore,
+		Total:   totalMaxScore,
 		Answers: answersModel,
 	}
 	if err := s.db.Create(&attempt).Error; err != nil {
 		return nil, fmt.Errorf("save attempt: %w", err)
 	}
 
-	rate := fmt.Sprintf("%.0f%%", (float64(score)/float64(total))*100)
-	s.log.Info("attempt submitted", "attemptID", attempt.ID, "userID", userID, "score", score, "total", total)
+	rate := fmt.Sprintf("%.0f%%", (float64(totalScore)/float64(totalMaxScore))*100)
+	s.log.Info("attempt submitted", "attemptID", attempt.ID, "userID", userID, "score", totalScore, "total", totalMaxScore)
 
-	return &SubmitResult{AttemptID: attempt.ID, Score: score, Total: total, Rate: rate}, nil
+	return &SubmitResult{
+		AttemptID: attempt.ID,
+		Score:     totalScore,
+		Total:     totalMaxScore,
+		Rate:      rate,
+		Details:   details,
+	}, nil
+}
+
+func gradeQuestion(question models.Question, answer dto.SubmitAnswerItem) (int, int, bool) {
+	maxScore := 100
+	switch question.Type {
+	case models.QuestionTypeSingle, models.QuestionTypeJudge:
+		score := gradeSingleOrJudge(question, answer)
+		return score, maxScore, score == maxScore
+	case models.QuestionTypeMultiple:
+		score := gradeMultiple(question, answer)
+		return score, maxScore, score == maxScore
+	case models.QuestionTypeBlank:
+		score := gradeBlank(question, answer)
+		return score, maxScore, score == maxScore
+	default:
+		return 0, maxScore, false
+	}
+}
+
+func gradeSingleOrJudge(question models.Question, answer dto.SubmitAnswerItem) int {
+	for _, opt := range question.Options {
+		if opt.ID == answer.OptionID {
+			if opt.IsCorrect {
+				return 100
+			}
+			break
+		}
+	}
+	return 0
+}
+
+func gradeMultiple(question models.Question, answer dto.SubmitAnswerItem) int {
+	scoring := question.MultipleScore
+	if scoring == "" {
+		scoring = models.MultipleScoringAllOrNothing
+	}
+
+	correctIDs := make(map[uint]bool)
+	correctCount := 0
+	for _, opt := range question.Options {
+		if opt.IsCorrect {
+			correctIDs[opt.ID] = true
+			correctCount++
+		}
+	}
+
+	selectedSet := make(map[uint]bool)
+	selectedCorrectCount := 0
+	for _, id := range answer.OptionIDs {
+		selectedSet[id] = true
+		if correctIDs[id] {
+			selectedCorrectCount++
+		}
+	}
+
+	hasWrongSelection := false
+	for _, id := range answer.OptionIDs {
+		if !correctIDs[id] {
+			hasWrongSelection = true
+			break
+		}
+	}
+
+	if scoring == models.MultipleScoringAllOrNothing {
+		if selectedCorrectCount == correctCount && len(answer.OptionIDs) == correctCount && !hasWrongSelection {
+			return 100
+		}
+		return 0
+	}
+
+	if hasWrongSelection {
+		return 0
+	}
+
+	if correctCount == 0 {
+		return 0
+	}
+
+	ratio := float64(selectedCorrectCount) / float64(correctCount)
+	score := int(math.Round(ratio * 100))
+	return score
+}
+
+func gradeBlank(question models.Question, answer dto.SubmitAnswerItem) int {
+	userAnswer := normalizeBlankAnswer(answer.BlankAnswer)
+	if userAnswer == "" {
+		return 0
+	}
+
+	for _, ba := range question.BlankAnswers {
+		correctAns := normalizeBlankAnswer(ba.Answer)
+		matchMode := ba.MatchMode
+		if matchMode == "" {
+			matchMode = models.BlankMatchExact
+		}
+
+		switch matchMode {
+		case models.BlankMatchExact:
+			if userAnswer == correctAns {
+				return 100
+			}
+		case models.BlankMatchIgnoreCase:
+			if strings.EqualFold(userAnswer, correctAns) {
+				return 100
+			}
+		case models.BlankMatchRegex:
+			re, err := regexp.Compile(correctAns)
+			if err != nil {
+				continue
+			}
+			if re.MatchString(userAnswer) {
+				return 100
+			}
+		}
+	}
+
+	return 0
+}
+
+func normalizeBlankAnswer(s string) string {
+	s = strings.TrimSpace(s)
+	s = fullWidthToHalfWidth(s)
+	return s
+}
+
+func fullWidthToHalfWidth(s string) string {
+	var builder strings.Builder
+	for _, r := range s {
+		if r >= 0xFF01 && r <= 0xFF5E {
+			builder.WriteRune(r - 0xFEE0)
+		} else if r == 0x3000 {
+			builder.WriteRune(0x20)
+		} else {
+			builder.WriteRune(r)
+		}
+	}
+	return builder.String()
 }
 
 func (s *AttemptService) StudentAttempts(userID uint) ([]models.Attempt, error) {
@@ -170,30 +332,46 @@ func (s *AttemptService) StudentMistakes(userID uint) ([]StudentMistake, error) 
 		questionIDs = append(questionIDs, id)
 	}
 	var questions []models.Question
-	if err := s.db.Preload("Options").Where("id IN ?", questionIDs).Find(&questions).Error; err != nil {
+	if err := s.db.Preload("Options").Preload("BlankAnswers").Where("id IN ?", questionIDs).Find(&questions).Error; err != nil {
 		return nil, fmt.Errorf("load mistake questions: %w", err)
 	}
 
 	result := make([]StudentMistake, 0, len(questions))
 	for _, q := range questions {
-		correct := ""
-		for _, opt := range q.Options {
-			if opt.IsCorrect {
-				correct = opt.Content
-				break
-			}
-		}
+		correct := getCorrectAnswer(q)
 		result = append(result, StudentMistake{
 			QuestionID:    q.ID,
 			Title:         q.Title,
 			WrongCount:    wrongCountMap[q.ID],
 			CorrectOption: correct,
+			Type:          q.Type,
 		})
 	}
 	sort.Slice(result, func(i, j int) bool {
 		return result[i].WrongCount > result[j].WrongCount
 	})
 	return result, nil
+}
+
+func getCorrectAnswer(q models.Question) string {
+	switch q.Type {
+	case models.QuestionTypeSingle, models.QuestionTypeJudge, models.QuestionTypeMultiple:
+		var corrects []string
+		for _, opt := range q.Options {
+			if opt.IsCorrect {
+				corrects = append(corrects, opt.Content)
+			}
+		}
+		return strings.Join(corrects, "、")
+	case models.QuestionTypeBlank:
+		var corrects []string
+		for _, ba := range q.BlankAnswers {
+			corrects = append(corrects, ba.Answer)
+		}
+		return strings.Join(corrects, " / ")
+	default:
+		return ""
+	}
 }
 
 func (s *AttemptService) ClassWrongStats() ([]ClassWrongStat, error) {
@@ -260,6 +438,7 @@ func (s *AttemptService) ClassWrongStats() ([]ClassWrongStat, error) {
 			QuestionID: key.questionID,
 			Question:   question.Title,
 			WrongCount: count,
+			Type:       question.Type,
 		})
 	}
 

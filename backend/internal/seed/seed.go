@@ -102,6 +102,7 @@ func seedQuestions(db *gorm.DB) error {
 
 	templates := []models.Question{
 		{
+			Type:        models.QuestionTypeSingle,
 			Title:       "TCP 三次握手中用于建立连接的第二步是？",
 			Description: "网络基础",
 			CreatedBy:   1,
@@ -113,6 +114,7 @@ func seedQuestions(db *gorm.DB) error {
 			},
 		},
 		{
+			Type:        models.QuestionTypeSingle,
 			Title:       "在 SQL 中用于去重查询结果的关键字是？",
 			Description: "数据库基础",
 			CreatedBy:   1,
@@ -124,25 +126,68 @@ func seedQuestions(db *gorm.DB) error {
 			},
 		},
 		{
-			Title:       "HTTP 状态码 404 表示？",
+			Type:        models.QuestionTypeJudge,
+			Title:       "HTTP 状态码 404 表示资源未找到。",
 			Description: "Web 基础",
 			CreatedBy:   1,
 			Options: []models.QuestionOption{
-				{Content: "服务器内部错误", IsCorrect: false},
-				{Content: "资源未找到", IsCorrect: true},
-				{Content: "请求成功", IsCorrect: false},
-				{Content: "未授权", IsCorrect: false},
+				{Content: "正确", IsCorrect: true},
+				{Content: "错误", IsCorrect: false},
 			},
 		},
 		{
-			Title:       "Git 用于查看提交历史的命令是？",
+			Type:        models.QuestionTypeMultiple,
+			Title:       "以下哪些是 JavaScript 的基本数据类型？",
+			Description: "JavaScript 基础",
+			CreatedBy:   1,
+			MultipleScore: models.MultipleScoringPartial,
+			Options: []models.QuestionOption{
+				{Content: "string", IsCorrect: true},
+				{Content: "number", IsCorrect: true},
+				{Content: "array", IsCorrect: false},
+				{Content: "boolean", IsCorrect: true},
+			},
+		},
+		{
+			Type:        models.QuestionTypeBlank,
+			Title:       "CSS 中用于设置元素背景颜色的属性是______。",
+			Description: "CSS 基础",
+			CreatedBy:   1,
+			BlankAnswers: []models.BlankAnswer{
+				{Answer: "background-color", MatchMode: models.BlankMatchIgnoreCase},
+				{Answer: "background", MatchMode: models.BlankMatchExact},
+			},
+		},
+		{
+			Type:        models.QuestionTypeMultiple,
+			Title:       "以下哪些是 Git 的常用命令？",
 			Description: "开发工具",
 			CreatedBy:   1,
+			MultipleScore: models.MultipleScoringAllOrNothing,
 			Options: []models.QuestionOption{
-				{Content: "git push", IsCorrect: false},
-				{Content: "git log", IsCorrect: true},
-				{Content: "git reset", IsCorrect: false},
-				{Content: "git clean", IsCorrect: false},
+				{Content: "commit", IsCorrect: true},
+				{Content: "push", IsCorrect: true},
+				{Content: "compile", IsCorrect: false},
+				{Content: "merge", IsCorrect: true},
+			},
+		},
+		{
+			Type:        models.QuestionTypeJudge,
+			Title:       "HTML 是一种编程语言。",
+			Description: "Web 基础",
+			CreatedBy:   1,
+			Options: []models.QuestionOption{
+				{Content: "正确", IsCorrect: false},
+				{Content: "错误", IsCorrect: true},
+			},
+		},
+		{
+			Type:        models.QuestionTypeBlank,
+			Title:       "在 Go 语言中，声明变量使用的关键字是______。",
+			Description: "Go 语言基础",
+			CreatedBy:   1,
+			BlankAnswers: []models.BlankAnswer{
+				{Answer: "var", MatchMode: models.BlankMatchExact},
 			},
 		},
 	}

@@ -323,10 +323,21 @@ func (h *HTTPHandler) respondServiceError(c *gin.Context, err error) {
 		c.JSON(http.StatusUnauthorized, gin.H{"message": err.Error()})
 	case errors.Is(err, service.ErrClassNotFound), errors.Is(err, service.ErrQuestionNotFound):
 		c.JSON(http.StatusNotFound, gin.H{"message": err.Error()})
-	case errors.Is(err, service.ErrInvalidQuestion), errors.Is(err, service.ErrInvalidSubmission):
-		c.JSON(http.StatusBadRequest, gin.H{"message": err.Error()})
 	case errors.Is(err, service.ErrNoQuestions):
 		c.JSON(http.StatusNotFound, gin.H{"message": err.Error()})
+	case errors.Is(err, service.ErrInvalidQuestion),
+		errors.Is(err, service.ErrInvalidSubmission),
+		errors.Is(err, service.ErrInvalidQuestionType),
+		errors.Is(err, service.ErrInvalidSingleOptionCount),
+		errors.Is(err, service.ErrInvalidSingleCorrect),
+		errors.Is(err, service.ErrInvalidMultipleOptionCount),
+		errors.Is(err, service.ErrInvalidMultipleCorrect),
+		errors.Is(err, service.ErrInvalidJudgeOptionCount),
+		errors.Is(err, service.ErrInvalidJudgeCorrect),
+		errors.Is(err, service.ErrInvalidBlankAnswerCount),
+		errors.Is(err, service.ErrInvalidBlankAnswer),
+		errors.Is(err, service.ErrInvalidOptionContent):
+		c.JSON(http.StatusBadRequest, gin.H{"message": err.Error()})
 	default:
 		h.log.Error("service error", "error", err.Error())
 		c.JSON(http.StatusInternalServerError, gin.H{"message": "internal server error"})

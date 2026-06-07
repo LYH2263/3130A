@@ -4,7 +4,7 @@ import { toast } from 'react-hot-toast';
 import { apiRequest } from '../api/client';
 import { QuestionEditorModal } from '../components/QuestionEditorModal';
 import { StatCard } from '../components/StatCard';
-import { questionSchema } from '../utils/validators';
+import { questionSchema, QUESTION_TYPE_LABELS } from '../utils/validators';
 
 export function TeacherDashboard({ user, token, onLogout }) {
   const [overview, setOverview] = useState(null);
@@ -180,6 +180,7 @@ export function TeacherDashboard({ user, token, onLogout }) {
                   <thead>
                     <tr>
                       <th>ID</th>
+                      <th>题型</th>
                       <th>题干</th>
                       <th>操作</th>
                     </tr>
@@ -188,6 +189,11 @@ export function TeacherDashboard({ user, token, onLogout }) {
                     {questions.map((question) => (
                       <tr key={question.id}>
                         <td className="font-mono text-xs">{question.id}</td>
+                        <td>
+                          <span className="badge badge-outline badge-sm">
+                            {QUESTION_TYPE_LABELS[question.type] || '单选题'}
+                          </span>
+                        </td>
                         <td className="max-w-sm truncate" title={question.title}>
                           {question.title}
                         </td>
@@ -205,7 +211,7 @@ export function TeacherDashboard({ user, token, onLogout }) {
                     ))}
                     {!questions.length ? (
                       <tr>
-                        <td colSpan={3} className="text-center text-slate-500">
+                        <td colSpan={4} className="text-center text-slate-500">
                           当前没有题目，请先新增或上传题库。
                         </td>
                       </tr>

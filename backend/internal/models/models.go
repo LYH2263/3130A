@@ -1,11 +1,49 @@
 package models
 
-import "time"
+import (
+	"database/sql/driver"
+	"encoding/json"
+	"errors"
+	"time"
+)
 
 const (
 	RoleTeacher = "teacher"
 	RoleStudent = "student"
+
+	QuestionTypeSingle   = "single"
+	QuestionTypeMultiple = "multiple"
+	QuestionTypeJudge    = "judge"
+	QuestionTypeBlank    = "blank"
+
+	BlankMatchExact       = "exact"
+	BlankMatchIgnoreCase  = "ignore_case"
+	BlankMatchRegex       = "regex"
+
+	MultipleScoringAllOrNothing = "all_or_nothing"
+	MultipleScoringPartial      = "partial"
 )
+
+type UintArray []uint
+
+func (a UintArray) Value() (driver.Value, error) {
+	if a == nil {
+		return nil, nil
+	}
+	return json.Marshal(a)
+}
+
+func (a *UintArray) Scan(value interface{}) error {
+	if value == nil {
+		*a = nil
+		return nil
+	}
+	bytes, ok := value.([]byte)
+	if !ok {
+		return errors.New("invalid data type for UintArray")
+	}
+	return json.Unmarshal(bytes, a)
+}
 
 type ClassRoom struct {
 	ID        uint      `gorm:"primaryKey" json:"id"`
@@ -26,13 +64,16 @@ type User struct {
 }
 
 type Question struct {
-	ID          uint             `gorm:"primaryKey" json:"id"`
-	Title       string           `gorm:"type:text;not null" json:"title"`
-	Description string           `gorm:"type:text" json:"description"`
-	CreatedBy   uint             `gorm:"index" json:"createdBy"`
-	Options     []QuestionOption `json:"options"`
-	CreatedAt   time.Time        `json:"createdAt"`
-	UpdatedAt   time.Time        `json:"updatedAt"`
+	ID            uint             `gorm:"primaryKey" json:"id"`
+	Type          string           `gorm:"size:16;not null;default:'single';index" json:"type"`
+	Title         string           `gorm:"type:text;not null" json:"title"`
+	Description   string           `gorm:"type:text" json:"description"`
+	CreatedBy     uint             `gorm:"index" json:"createdBy"`
+	Options       []QuestionOption `json:"options,omitempty"`
+	BlankAnswers  []BlankAnswer    `json:"blankAnswers,omitempty"`
+	MultipleScore string           `gorm:"size:20;not null;default:'all_or_nothing'" json:"multipleScore"`
+	CreatedAt     time.Time        `json:"createdAt"`
+	UpdatedAt     time.Time        `json:"updatedAt"`
 }
 
 type QuestionOption struct {
@@ -40,8 +81,19 @@ type QuestionOption struct {
 	QuestionID uint      `gorm:"index;not null" json:"questionId"`
 	Content    string    `gorm:"type:text;not null" json:"content"`
 	IsCorrect  bool      `gorm:"not null" json:"isCorrect"`
+	SortOrder  int       `gorm:"not null;default:0" json:"sortOrder"`
 	CreatedAt  time.Time `json:"createdAt"`
 	UpdatedAt  time.Time `json:"updatedAt"`
+}
+
+type BlankAnswer struct {
+	ID          uint      `gorm:"primaryKey" json:"id"`
+	QuestionID  uint      `gorm:"index;not null" json:"questionId"`
+	Answer      string    `gorm:"type:text;not null" json:"answer"`
+	MatchMode   string    `gorm:"size:20;not null;default:'exact'" json:"matchMode"`
+	SortOrder   int       `gorm:"not null;default:0" json:"sortOrder"`
+	CreatedAt   time.Time `json:"createdAt"`
+	UpdatedAt   time.Time `json:"updatedAt"`
 }
 
 type Attempt struct {
@@ -58,11 +110,16 @@ type Attempt struct {
 }
 
 type AttemptAnswer struct {
-	ID               uint      `gorm:"primaryKey" json:"id"`
-	AttemptID        uint      `gorm:"index;not null" json:"attemptId"`
-	QuestionID       uint      `gorm:"index;not null" json:"questionId"`
-	SelectedOptionID uint      `gorm:"index;not null" json:"selectedOptionId"`
-	IsCorrect        bool      `gorm:"index;not null" json:"isCorrect"`
-	CreatedAt        time.Time `json:"createdAt"`
-	UpdatedAt        time.Time `json:"updatedAt"`
+	ID                 uint      `gorm:"primaryKey" json:"id"`
+	AttemptID          uint      `gorm:"index;not null" json:"attemptId"`
+	QuestionID         uint      `gorm:"index;not null" json:"questionId"`
+	QuestionType       string    `gorm:"size:16;not null" json:"questionType"`
+	SelectedOptionID   uint      `gorm:"index" json:"selectedOptionId,omitempty"`
+	SelectedOptionIDs  UintArray `gorm:"type:json" json:"selectedOptionIds,omitempty"`
+	BlankAnswer        string    `gorm:"type:text" json:"blankAnswer,omitempty"`
+	IsCorrect          bool      `gorm:"index;not null" json:"isCorrect"`
+	Score              int       `gorm:"not null;default:0" json:"score"`
+	MaxScore           int       `gorm:"not null;default:100" json:"maxScore"`
+	CreatedAt          time.Time `json:"createdAt"`
+	UpdatedAt          time.Time `json:"updatedAt"`
 }

@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -20,7 +21,7 @@ func main() {
 	cfg := config.Load()
 	log := logger.New(cfg.LogLevel)
 
-	db, err := connectWithRetry(cfg.DSN(), 15, 2*time.Second)
+	db, err := connectWithRetry(cfg.DSN(), 15, 2*time.Second, log)
 	if err != nil {
 		log.Error("database connect failed", "error", err.Error())
 		return
@@ -49,10 +50,10 @@ func main() {
 	}
 }
 
-func connectWithRetry(dsn string, retries int, interval time.Duration) (*gorm.DB, error) {
+func connectWithRetry(dsn string, retries int, interval time.Duration, log *slog.Logger) (*gorm.DB, error) {
 	var lastErr error
 	for i := 0; i < retries; i++ {
-		db, err := database.Connect(dsn)
+		db, err := database.Connect(dsn, log)
 		if err == nil {
 			return db, nil
 		}

@@ -27,9 +27,10 @@ type StudentOption struct {
 
 type StudentQuestion struct {
 	ID          uint            `json:"id"`
+	Type        string          `json:"type"`
 	Title       string          `json:"title"`
 	Description string          `json:"description"`
-	Options     []StudentOption `json:"options"`
+	Options     []StudentOption `json:"options,omitempty"`
 }
 
 func NewQuestionService(db *gorm.DB, log *slog.Logger) *QuestionService {
@@ -38,75 +39,109 @@ func NewQuestionService(db *gorm.DB, log *slog.Logger) *QuestionService {
 
 func (s *QuestionService) ListQuestions() ([]models.Question, error) {
 	var questions []models.Question
-	if err := s.db.Preload("Options").Order("id desc").Find(&questions).Error; err != nil {
+	if err := s.db.Preload("Options").Preload("BlankAnswers").Order("id desc").Find(&questions).Error; err != nil {
 		return nil, fmt.Errorf("list questions: %w", err)
 	}
 	return questions, nil
 }
 
 func (s *QuestionService) CreateQuestion(input dto.QuestionInput, createdBy uint) (*models.Question, error) {
-	if !isQuestionValid(input.Options) {
-		return nil, ErrInvalidQuestion
+	if err := validateQuestionInput(input); err != nil {
+		return nil, err
 	}
 
 	question := models.Question{
-		Title:       strings.TrimSpace(input.Title),
-		Description: strings.TrimSpace(input.Description),
-		CreatedBy:   createdBy,
-		Options:     toOptionModels(input.Options),
+		Type:          strings.TrimSpace(input.Type),
+		Title:         strings.TrimSpace(input.Title),
+		Description:   strings.TrimSpace(input.Description),
+		CreatedBy:     createdBy,
+		MultipleScore: strings.TrimSpace(input.MultipleScore),
+	}
+
+	if question.MultipleScore == "" {
+		question.MultipleScore = models.MultipleScoringAllOrNothing
+	}
+
+	if question.Type == models.QuestionTypeBlank {
+		question.BlankAnswers = toBlankAnswerModels(input.BlankAnswers)
+	} else {
+		question.Options = toOptionModels(input.Options)
 	}
 
 	if err := s.db.Create(&question).Error; err != nil {
 		return nil, fmt.Errorf("create question: %w", err)
 	}
 
-	if err := s.db.Preload("Options").First(&question, question.ID).Error; err != nil {
+	if err := s.db.Preload("Options").Preload("BlankAnswers").First(&question, question.ID).Error; err != nil {
 		return nil, fmt.Errorf("reload question: %w", err)
 	}
 
-	s.log.Info("question created", "questionID", question.ID, "createdBy", createdBy)
+	s.log.Info("question created", "questionID", question.ID, "type", question.Type, "createdBy", createdBy)
 	return &question, nil
 }
 
 func (s *QuestionService) UpdateQuestion(questionID uint, input dto.QuestionInput) (*models.Question, error) {
-	if !isQuestionValid(input.Options) {
-		return nil, ErrInvalidQuestion
+	if err := validateQuestionInput(input); err != nil {
+		return nil, err
 	}
 
 	var question models.Question
-	if err := s.db.Preload("Options").First(&question, questionID).Error; err != nil {
+	if err := s.db.Preload("Options").Preload("BlankAnswers").First(&question, questionID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrQuestionNotFound
 		}
 		return nil, fmt.Errorf("find question: %w", err)
 	}
 
+	question.Type = strings.TrimSpace(input.Type)
 	question.Title = strings.TrimSpace(input.Title)
 	question.Description = strings.TrimSpace(input.Description)
+	question.MultipleScore = strings.TrimSpace(input.MultipleScore)
+	if question.MultipleScore == "" {
+		question.MultipleScore = models.MultipleScoringAllOrNothing
+	}
 
 	if err := s.db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Model(&question).Updates(map[string]any{
-			"title":       question.Title,
-			"description": question.Description,
+			"type":           question.Type,
+			"title":          question.Title,
+			"description":    question.Description,
+			"multiple_score": question.MultipleScore,
 		}).Error; err != nil {
 			return err
 		}
+
 		if err := tx.Where("question_id = ?", question.ID).Delete(&models.QuestionOption{}).Error; err != nil {
 			return err
 		}
-		options := toOptionModels(input.Options)
-		for i := range options {
-			options[i].QuestionID = question.ID
-		}
-		if err := tx.Create(&options).Error; err != nil {
+		if err := tx.Where("question_id = ?", question.ID).Delete(&models.BlankAnswer{}).Error; err != nil {
 			return err
 		}
+
+		if question.Type == models.QuestionTypeBlank {
+			answers := toBlankAnswerModels(input.BlankAnswers)
+			for i := range answers {
+				answers[i].QuestionID = question.ID
+			}
+			if err := tx.Create(&answers).Error; err != nil {
+				return err
+			}
+		} else {
+			options := toOptionModels(input.Options)
+			for i := range options {
+				options[i].QuestionID = question.ID
+			}
+			if err := tx.Create(&options).Error; err != nil {
+				return err
+			}
+		}
+
 		return nil
 	}); err != nil {
 		return nil, fmt.Errorf("update question: %w", err)
 	}
 
-	if err := s.db.Preload("Options").First(&question, question.ID).Error; err != nil {
+	if err := s.db.Preload("Options").Preload("BlankAnswers").First(&question, question.ID).Error; err != nil {
 		return nil, fmt.Errorf("reload question: %w", err)
 	}
 	return &question, nil
@@ -115,6 +150,9 @@ func (s *QuestionService) UpdateQuestion(questionID uint, input dto.QuestionInpu
 func (s *QuestionService) DeleteQuestion(questionID uint) error {
 	if err := s.db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Where("question_id = ?", questionID).Delete(&models.QuestionOption{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("question_id = ?", questionID).Delete(&models.BlankAnswer{}).Error; err != nil {
 			return err
 		}
 		res := tx.Delete(&models.Question{}, questionID)
@@ -148,7 +186,11 @@ func (s *QuestionService) UploadFromJSON(data []byte, createdBy uint) (int, erro
 
 	count := 0
 	for _, item := range payload.Questions {
-		if !isQuestionValid(item.Options) {
+		if item.Type == "" {
+			item.Type = models.QuestionTypeSingle
+		}
+		if err := validateQuestionInput(item); err != nil {
+			s.log.Warn("upload question skipped", "error", err.Error())
 			continue
 		}
 		if _, err := s.CreateQuestion(item, createdBy); err != nil {
@@ -162,7 +204,7 @@ func (s *QuestionService) UploadFromJSON(data []byte, createdBy uint) (int, erro
 
 func (s *QuestionService) GetQuizQuestions(limit int) ([]StudentQuestion, error) {
 	var questions []models.Question
-	query := s.db.Preload("Options").Order("id asc")
+	query := s.db.Preload("Options").Preload("BlankAnswers").Order("id asc")
 	if limit > 0 {
 		query = query.Limit(limit)
 	}
@@ -176,46 +218,144 @@ func (s *QuestionService) GetQuizQuestions(limit int) ([]StudentQuestion, error)
 	r := rand.New(rand.NewSource(time.Now().UnixNano()))
 	result := make([]StudentQuestion, 0, len(questions))
 	for _, q := range questions {
-		opts := make([]StudentOption, 0, len(q.Options))
-		for _, opt := range q.Options {
-			opts = append(opts, StudentOption{ID: opt.ID, Content: opt.Content})
-		}
-		r.Shuffle(len(opts), func(i, j int) {
-			opts[i], opts[j] = opts[j], opts[i]
-		})
-		result = append(result, StudentQuestion{
+		sq := StudentQuestion{
 			ID:          q.ID,
+			Type:        q.Type,
 			Title:       q.Title,
 			Description: q.Description,
-			Options:     opts,
-		})
+		}
+
+		if q.Type != models.QuestionTypeBlank {
+			opts := make([]StudentOption, 0, len(q.Options))
+			for _, opt := range q.Options {
+				opts = append(opts, StudentOption{ID: opt.ID, Content: opt.Content})
+			}
+			r.Shuffle(len(opts), func(i, j int) {
+				opts[i], opts[j] = opts[j], opts[i]
+			})
+			sq.Options = opts
+		}
+
+		result = append(result, sq)
 	}
 	return result, nil
 }
 
-func isQuestionValid(options []dto.QuestionOptionInput) bool {
-	if len(options) < 2 {
-		return false
+func validateQuestionInput(input dto.QuestionInput) error {
+	qType := strings.TrimSpace(input.Type)
+	if qType == "" {
+		return ErrInvalidQuestion
+	}
+
+	switch qType {
+	case models.QuestionTypeSingle:
+		return validateSingleQuestion(input)
+	case models.QuestionTypeMultiple:
+		return validateMultipleQuestion(input)
+	case models.QuestionTypeJudge:
+		return validateJudgeQuestion(input)
+	case models.QuestionTypeBlank:
+		return validateBlankQuestion(input)
+	default:
+		return ErrInvalidQuestionType
+	}
+}
+
+func validateSingleQuestion(input dto.QuestionInput) error {
+	if len(input.Options) < 2 || len(input.Options) > 6 {
+		return ErrInvalidSingleOptionCount
 	}
 	correctCount := 0
-	for _, opt := range options {
+	for _, opt := range input.Options {
 		if strings.TrimSpace(opt.Content) == "" {
-			return false
+			return ErrInvalidOptionContent
 		}
 		if opt.IsCorrect {
 			correctCount++
 		}
 	}
-	return correctCount == 1
+	if correctCount != 1 {
+		return ErrInvalidSingleCorrect
+	}
+	return nil
+}
+
+func validateMultipleQuestion(input dto.QuestionInput) error {
+	if len(input.Options) < 2 || len(input.Options) > 6 {
+		return ErrInvalidMultipleOptionCount
+	}
+	correctCount := 0
+	for _, opt := range input.Options {
+		if strings.TrimSpace(opt.Content) == "" {
+			return ErrInvalidOptionContent
+		}
+		if opt.IsCorrect {
+			correctCount++
+		}
+	}
+	if correctCount < 2 {
+		return ErrInvalidMultipleCorrect
+	}
+	return nil
+}
+
+func validateJudgeQuestion(input dto.QuestionInput) error {
+	if len(input.Options) != 2 {
+		return ErrInvalidJudgeOptionCount
+	}
+	for _, opt := range input.Options {
+		if strings.TrimSpace(opt.Content) == "" {
+			return ErrInvalidOptionContent
+		}
+	}
+	correctCount := 0
+	for _, opt := range input.Options {
+		if opt.IsCorrect {
+			correctCount++
+		}
+	}
+	if correctCount != 1 {
+		return ErrInvalidJudgeCorrect
+	}
+	return nil
+}
+
+func validateBlankQuestion(input dto.QuestionInput) error {
+	if len(input.BlankAnswers) < 1 {
+		return ErrInvalidBlankAnswerCount
+	}
+	for _, ans := range input.BlankAnswers {
+		if strings.TrimSpace(ans.Answer) == "" {
+			return ErrInvalidBlankAnswer
+		}
+	}
+	return nil
 }
 
 func toOptionModels(inputs []dto.QuestionOptionInput) []models.QuestionOption {
 	options := make([]models.QuestionOption, 0, len(inputs))
-	for _, opt := range inputs {
+	for i, opt := range inputs {
 		options = append(options, models.QuestionOption{
 			Content:   strings.TrimSpace(opt.Content),
 			IsCorrect: opt.IsCorrect,
+			SortOrder: i,
 		})
 	}
 	return options
+}
+
+func toBlankAnswerModels(inputs []dto.BlankAnswerInput) []models.BlankAnswer {
+	answers := make([]models.BlankAnswer, 0, len(inputs))
+	for i, ans := range inputs {
+		matchMode := ans.MatchMode
+		if matchMode == "" {
+			matchMode = models.BlankMatchExact
+		}
+		answers = append(answers, models.BlankAnswer{
+			Answer:    strings.TrimSpace(ans.Answer),
+			MatchMode: matchMode,
+			SortOrder: i,
+		})
+	}
+	return answers
 }
