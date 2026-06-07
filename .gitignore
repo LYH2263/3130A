@@ -1,0 +1,16 @@
+.DS_Store
+.vscode
+.idea
+node_modules
+dist
+build
+coverage
+*.log
+.env
+backend/tmp
+
+# 本地文档
+对话/
+代码生成.md
+迭代.md
+题目.md

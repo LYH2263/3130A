@@ -1,0 +1,64 @@
+services:
+  db:
+    image: mysql:8.0
+    container_name: quiz-db-3130
+    command: ["mysqld", "--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci"]
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: quizlab
+    ports:
+      - "3330:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 60s
+    networks:
+      - quiz-network
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: quiz-backend-3130
+    environment:
+      APP_ENV: production
+      LOG_LEVEL: info
+      PORT: 8130
+      JWT_SECRET: super-secret-change-me
+      DB_HOST: db
+      DB_PORT: 3306
+      DB_USER: root
+      DB_PASSWORD: root
+      DB_NAME: quizlab
+    ports:
+      - "8130:8130"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - quiz-network
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: quiz-frontend-3130
+    ports:
+      - "3130:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+    networks:
+      - quiz-network
+
+volumes:
+  mysql_data:
+
+networks:
+  quiz-network:
+    driver: bridge
