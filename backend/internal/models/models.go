@@ -22,6 +22,9 @@ const (
 
 	MultipleScoringAllOrNothing = "all_or_nothing"
 	MultipleScoringPartial      = "partial"
+
+	MistakeReviewStatusPending  = "pending"
+	MistakeReviewStatusMastered = "mastered"
 )
 
 type UintArray []uint
@@ -147,4 +150,17 @@ type AttemptAnswer struct {
 	MaxScore           int       `gorm:"not null;default:100" json:"maxScore"`
 	CreatedAt          time.Time `json:"createdAt"`
 	UpdatedAt          time.Time `json:"updatedAt"`
+}
+
+type MistakeReview struct {
+	ID              uint      `gorm:"primaryKey" json:"id"`
+	UserID          uint      `gorm:"index;not null;uniqueIndex:idx_user_question" json:"userId"`
+	QuestionID      uint      `gorm:"index;not null;uniqueIndex:idx_user_question" json:"questionId"`
+	Question        *Question `gorm:"foreignKey:QuestionID" json:"question,omitempty"`
+	Status          string    `gorm:"size:16;not null;default:'pending';index" json:"status"`
+	ReviewCount     int       `gorm:"not null;default:0" json:"reviewCount"`
+	StreakCorrect   int       `gorm:"not null;default:0" json:"streakCorrect"`
+	LastReviewedAt  *time.Time `json:"lastReviewedAt"`
+	CreatedAt       time.Time `json:"createdAt"`
+	UpdatedAt       time.Time `json:"updatedAt"`
 }

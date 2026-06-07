@@ -17,13 +17,14 @@ import (
 )
 
 type HTTPHandler struct {
-	authSvc     *service.AuthService
-	categorySvc *service.CategoryService
-	tagSvc      *service.TagService
-	questionSvc *service.QuestionService
-	attemptSvc  *service.AttemptService
-	tokens      *auth.TokenManager
-	log         *slog.Logger
+	authSvc          *service.AuthService
+	categorySvc      *service.CategoryService
+	tagSvc           *service.TagService
+	questionSvc      *service.QuestionService
+	attemptSvc       *service.AttemptService
+	mistakeReviewSvc *service.MistakeReviewService
+	tokens           *auth.TokenManager
+	log              *slog.Logger
 }
 
 func New(
@@ -32,17 +33,19 @@ func New(
 	tagSvc *service.TagService,
 	questionSvc *service.QuestionService,
 	attemptSvc *service.AttemptService,
+	mistakeReviewSvc *service.MistakeReviewService,
 	tokens *auth.TokenManager,
 	log *slog.Logger,
 ) *HTTPHandler {
 	return &HTTPHandler{
-		authSvc:     authSvc,
-		categorySvc: categorySvc,
-		tagSvc:      tagSvc,
-		questionSvc: questionSvc,
-		attemptSvc:  attemptSvc,
-		tokens:      tokens,
-		log:         log,
+		authSvc:          authSvc,
+		categorySvc:      categorySvc,
+		tagSvc:           tagSvc,
+		questionSvc:      questionSvc,
+		attemptSvc:       attemptSvc,
+		mistakeReviewSvc: mistakeReviewSvc,
+		tokens:           tokens,
+		log:              log,
 	}
 }
 
@@ -96,6 +99,8 @@ func (h *HTTPHandler) Router() *gin.Engine {
 				student.POST("/submit", h.submit)
 				student.GET("/mistakes", h.studentMistakes)
 				student.GET("/attempts", h.studentAttempts)
+				student.GET("/mistake-review/quiz", h.mistakeReviewQuiz)
+				student.POST("/mistake-review/submit", h.mistakeReviewSubmit)
 			}
 		}
 	}
@@ -331,12 +336,47 @@ func (h *HTTPHandler) studentMistakes(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"message": "invalid token"})
 		return
 	}
-	items, err := h.attemptSvc.StudentMistakes(claims.UserID)
+	items, err := h.mistakeReviewSvc.GetMistakeReviews(claims.UserID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"message": "load mistakes failed"})
 		return
 	}
 	c.JSON(http.StatusOK, items)
+}
+
+func (h *HTTPHandler) mistakeReviewQuiz(c *gin.Context) {
+	claims, ok := middleware.GetClaims(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"message": "invalid token"})
+		return
+	}
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
+	questions, err := h.mistakeReviewSvc.GenerateReviewQuiz(claims.UserID, limit)
+	if err != nil {
+		h.respondServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, questions)
+}
+
+func (h *HTTPHandler) mistakeReviewSubmit(c *gin.Context) {
+	claims, ok := middleware.GetClaims(c)
+	if !ok || claims.ClassID == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"message": "invalid student context"})
+		return
+	}
+
+	var req dto.SubmitRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "invalid submit payload"})
+		return
+	}
+	result, err := h.mistakeReviewSvc.SubmitReview(claims.UserID, *claims.ClassID, req)
+	if err != nil {
+		h.respondServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, result)
 }
 
 func (h *HTTPHandler) studentAttempts(c *gin.Context) {

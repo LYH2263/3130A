@@ -38,8 +38,9 @@ func main() {
 	tagSvc := service.NewTagService(db, log)
 	questionSvc := service.NewQuestionService(db, log)
 	attemptSvc := service.NewAttemptService(db, log)
+	mistakeReviewSvc := service.NewMistakeReviewService(db, log)
 
-	h := handler.New(authSvc, categorySvc, tagSvc, questionSvc, attemptSvc, tokens, log)
+	h := handler.New(authSvc, categorySvc, tagSvc, questionSvc, attemptSvc, mistakeReviewSvc, tokens, log)
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,
 		Handler:           h.Router(),

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { toast } from 'react-hot-toast';
 
-import { apiRequest } from '../api/client';
+import { apiRequest, fetchMistakeReviewQuiz, submitMistakeReview } from '../api/client';
 import { StatCard } from '../components/StatCard';
 import { QUESTION_TYPE_LABELS } from '../utils/validators';
 
@@ -159,6 +159,100 @@ function ResultDetail({ questions, details }) {
   );
 }
 
+function MistakeReviewResult({ result, questions }) {
+  const questionMap = useMemo(() => {
+    const map = {};
+    questions.forEach((q) => {
+      map[q.id] = q;
+    });
+    return map;
+  }, [questions]);
+
+  return (
+    <div className="space-y-5">
+      <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3">
+        <div className="text-lg font-bold text-emerald-700">
+          本次成绩：{result.score}/{result.total}（正确率 {result.rate}）
+        </div>
+        <div className="mt-1 text-sm text-emerald-600">
+          新掌握 {result.newlyMastered?.length || 0} 题，仍需巩固 {result.stillNeedReview?.length || 0} 题
+        </div>
+      </div>
+
+      {result.newlyMastered && result.newlyMastered.length > 0 && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+          <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-amber-800">
+            <span className="badge badge-success badge-sm">新掌握</span>
+            恭喜！本次新掌握的题目
+          </h3>
+          <div className="space-y-2">
+            {result.newlyMastered.map((item, idx) => {
+              const q = questionMap[item.questionId];
+              return (
+                <div
+                  key={item.questionId}
+                  className="rounded-lg border border-amber-200 bg-white p-3"
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="text-sm font-medium text-slate-700">
+                      {idx + 1}. {q?.title || '未知题目'}
+                    </p>
+                    <span className="badge badge-success badge-xs">已掌握</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {result.stillNeedReview && result.stillNeedReview.length > 0 && (
+        <div className="rounded-xl border border-sky-200 bg-sky-50 p-4">
+          <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-sky-800">
+            <span className="badge badge-info badge-sm">仍需巩固</span>
+            还需要继续复习的题目
+          </h3>
+          <div className="space-y-2">
+            {result.stillNeedReview.map((item, idx) => {
+              const q = questionMap[item.questionId];
+              return (
+                <div
+                  key={item.questionId}
+                  className={`rounded-lg border bg-white p-3 ${
+                    item.isCorrect ? 'border-emerald-200' : 'border-red-200'
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="text-sm font-medium text-slate-700">
+                      {idx + 1}. {q?.title || '未知题目'}
+                    </p>
+                    <div className="flex flex-col items-end gap-1">
+                      <span
+                        className={`badge badge-xs ${
+                          item.isCorrect ? 'badge-success' : 'badge-error'
+                        }`}
+                      >
+                        {item.isCorrect ? '答对' : '答错'}
+                      </span>
+                      <span className="text-xs text-slate-500">
+                        进度：{item.reviewCount}次
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {result.details && result.details.length > 0 && (
+        <ResultDetail questions={questions} details={result.details} />
+      )}
+    </div>
+  );
+}
+
 function isAnswerProvided(question, answer) {
   const type = question.type || 'single';
   if (type === 'single' || type === 'judge') {
@@ -173,6 +267,62 @@ function isAnswerProvided(question, answer) {
   return false;
 }
 
+function MistakeItem({ item, onReview }) {
+  const isMastered = item.status === 'mastered';
+
+  return (
+    <div className={`rounded-xl border p-3 ${isMastered ? 'bg-emerald-50/50 border-emerald-200' : 'bg-white border-slate-200'}`}>
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0 flex-1">
+          <p
+            className="truncate text-sm font-medium text-slate-700"
+            title={`${item.title}\n正确答案：${item.correctOption}`}
+          >
+            {item.title}
+          </p>
+          <div className="mt-1 flex items-center gap-2">
+            <span className={getTypeBadgeClass(item.type)}>
+              {QUESTION_TYPE_LABELS[item.type] || '单选'}
+            </span>
+            <span className="badge badge-warning badge-outline badge-xs">
+              错{item.wrongCount}次
+            </span>
+            {isMastered ? (
+              <span className="badge badge-success badge-xs">已掌握</span>
+            ) : (
+              <span className="badge badge-ghost badge-xs">
+                复习{item.reviewCount}次
+              </span>
+            )}
+          </div>
+        </div>
+        {!isMastered && (
+          <button
+            className="btn btn-xs btn-primary btn-outline shrink-0"
+            onClick={() => onReview && onReview(item.questionId)}
+          >
+            重练
+          </button>
+        )}
+      </div>
+      <div className="mt-2">
+        <div className="flex items-center justify-between text-xs text-slate-500 mb-1">
+          <span>掌握进度</span>
+          <span>{item.masteryRate || 0}%</span>
+        </div>
+        <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-200">
+          <div
+            className={`h-full rounded-full transition-all ${
+              isMastered ? 'bg-emerald-500' : 'bg-teal-500'
+            }`}
+            style={{ width: `${item.masteryRate || 0}%` }}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function StudentDashboard({ user, token, onLogout }) {
   const [loading, setLoading] = useState(true);
   const [questions, setQuestions] = useState([]);
@@ -182,6 +332,8 @@ export function StudentDashboard({ user, token, onLogout }) {
   const [submitting, setSubmitting] = useState(false);
   const [loadingQuiz, setLoadingQuiz] = useState(false);
   const [lastResult, setLastResult] = useState(null);
+  const [quizMode, setQuizMode] = useState('normal');
+  const [mistakeReviewResult, setMistakeReviewResult] = useState(null);
 
   const className = user.classRoom?.name || '未分班';
 
@@ -196,6 +348,14 @@ export function StudentDashboard({ user, token, onLogout }) {
     }
     return `${Math.round((totalScore / totalCount) * 100)}%`;
   }, [attempts]);
+
+  const pendingMistakes = useMemo(() => {
+    return mistakes.filter((m) => m.status !== 'mastered');
+  }, [mistakes]);
+
+  const masteredMistakes = useMemo(() => {
+    return mistakes.filter((m) => m.status === 'mastered');
+  }, [mistakes]);
 
   const loadStudentData = async () => {
     setLoading(true);
@@ -225,9 +385,59 @@ export function StudentDashboard({ user, token, onLogout }) {
       setQuestions(quiz);
       setAnswers({});
       setLastResult(null);
+      setMistakeReviewResult(null);
+      setQuizMode('normal');
       toast.success('已生成新试卷，选项顺序已随机');
     } catch (error) {
       toast.error(error.message || '拉取试卷失败');
+    } finally {
+      setLoadingQuiz(false);
+    }
+  };
+
+  const startMistakeReview = async () => {
+    if (pendingMistakes.length === 0) {
+      toast.error('没有待复习的错题');
+      return;
+    }
+    try {
+      setLoadingQuiz(true);
+      const quiz = await fetchMistakeReviewQuiz(token, 10);
+      if (quiz.length === 0) {
+        toast.error('没有待复习的错题');
+        return;
+      }
+      setQuestions(quiz);
+      setAnswers({});
+      setLastResult(null);
+      setMistakeReviewResult(null);
+      setQuizMode('review');
+      toast.success(`已生成错题重练卷，共${quiz.length}道题`);
+    } catch (error) {
+      toast.error(error.message || '生成错题重练卷失败');
+    } finally {
+      setLoadingQuiz(false);
+    }
+  };
+
+  const handleSingleMistakeReview = async (questionId) => {
+    try {
+      setLoadingQuiz(true);
+      const quiz = await fetchMistakeReviewQuiz(token, 1);
+      const target = quiz.find((q) => q.id === questionId);
+      const questionsToUse = target ? [target] : quiz.slice(0, 1);
+      if (questionsToUse.length === 0) {
+        toast.error('无法加载该题目');
+        return;
+      }
+      setQuestions(questionsToUse);
+      setAnswers({});
+      setLastResult(null);
+      setMistakeReviewResult(null);
+      setQuizMode('review');
+      toast.success('开始单题重练');
+    } catch (error) {
+      toast.error(error.message || '加载题目失败');
     } finally {
       setLoadingQuiz(false);
     }
@@ -240,55 +450,73 @@ export function StudentDashboard({ user, token, onLogout }) {
     }));
   };
 
+  const buildAnswersPayload = () => {
+    return questions.map((question) => {
+      const answer = answers[question.id] || {};
+      const type = question.type || 'single';
+
+      if (type === 'single' || type === 'judge') {
+        return {
+          questionId: question.id,
+          optionId: answer.optionId,
+        };
+      }
+      if (type === 'multiple') {
+        return {
+          questionId: question.id,
+          optionIds: answer.optionIds || [],
+        };
+      }
+      if (type === 'blank') {
+        return {
+          questionId: question.id,
+          blankAnswer: answer.blankAnswer || '',
+        };
+      }
+      return { questionId: question.id };
+    });
+  };
+
+  const validateAnswers = () => {
+    for (const question of questions) {
+      if (!isAnswerProvided(question, answers[question.id])) {
+        toast.error(`请完成第 ${questions.indexOf(question) + 1} 题：${question.title.slice(0, 12)}...`);
+        return false;
+      }
+    }
+    return true;
+  };
+
   const submitQuiz = async () => {
     if (!questions.length) {
       toast.error('请先开始答题');
       return;
     }
 
-    for (const question of questions) {
-      if (!isAnswerProvided(question, answers[question.id])) {
-        toast.error(`请完成第 ${questions.indexOf(question) + 1} 题：${question.title.slice(0, 12)}...`);
-        return;
-      }
+    if (!validateAnswers()) {
+      return;
     }
 
     try {
       setSubmitting(true);
-      const answersPayload = questions.map((question) => {
-        const answer = answers[question.id] || {};
-        const type = question.type || 'single';
+      const answersPayload = buildAnswersPayload();
 
-        if (type === 'single' || type === 'judge') {
-          return {
-            questionId: question.id,
-            optionId: answer.optionId,
-          };
-        }
-        if (type === 'multiple') {
-          return {
-            questionId: question.id,
-            optionIds: answer.optionIds || [],
-          };
-        }
-        if (type === 'blank') {
-          return {
-            questionId: question.id,
-            blankAnswer: answer.blankAnswer || '',
-          };
-        }
-        return { questionId: question.id };
-      });
-
-      const payload = { answers: answersPayload };
-      const result = await apiRequest('/student/submit', {
-        method: 'POST',
-        token,
-        body: payload,
-      });
-      setLastResult(result);
-      toast.success(`提交成功：${result.score}/${result.total}`);
-      await loadStudentData();
+      if (quizMode === 'review') {
+        const result = await submitMistakeReview(token, answersPayload);
+        setMistakeReviewResult(result);
+        toast.success(`提交成功：${result.score}/${result.total}`);
+        await loadStudentData();
+      } else {
+        const payload = { answers: answersPayload };
+        const result = await apiRequest('/student/submit', {
+          method: 'POST',
+          token,
+          body: payload,
+        });
+        setLastResult(result);
+        toast.success(`提交成功：${result.score}/${result.total}`);
+        await loadStudentData();
+      }
     } catch (error) {
       toast.error(error.message || '提交失败');
     } finally {
@@ -304,13 +532,20 @@ export function StudentDashboard({ user, token, onLogout }) {
           <h1 className="mt-1 text-2xl font-bold text-slate-800">学生答题中心</h1>
           <p className="text-sm text-slate-600">当前班级：{className}</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <button
             className="btn btn-outline btn-primary"
             onClick={startQuiz}
             disabled={loadingQuiz}
           >
             {loadingQuiz ? '生成中...' : '开始新一轮答题'}
+          </button>
+          <button
+            className="btn btn-secondary"
+            onClick={startMistakeReview}
+            disabled={loadingQuiz || pendingMistakes.length === 0}
+          >
+            错题重练
           </button>
           <button className="btn btn-neutral" onClick={onLogout}>
             退出登录
@@ -335,12 +570,18 @@ export function StudentDashboard({ user, token, onLogout }) {
             <div className="grid gap-4 md:grid-cols-3">
               <StatCard title="已完成次数" value={attempts.length} />
               <StatCard title="平均正确率" value={averageRate} />
-              <StatCard title="错题数量" value={mistakes.length} hint="错题本自动更新" />
+              <StatCard
+                title="错题数量"
+                value={pendingMistakes.length}
+                hint={`已掌握 ${masteredMistakes.length} 题`}
+              />
             </div>
 
             <article className="rounded-3xl border border-slate-200 bg-white p-5 shadow-card">
               <div className="mb-3 flex items-center justify-between">
-                <h2 className="text-lg font-semibold text-slate-800">在线答题</h2>
+                <h2 className="text-lg font-semibold text-slate-800">
+                  {quizMode === 'review' ? '错题重练' : '在线答题'}
+                </h2>
                 <button
                   className="btn btn-sm btn-secondary"
                   onClick={submitQuiz}
@@ -351,9 +592,14 @@ export function StudentDashboard({ user, token, onLogout }) {
               </div>
 
               {!questions.length ? (
-                <p className="rounded-xl border border-dashed border-slate-300 px-4 py-8 text-center text-sm text-slate-500">
-                  点击“开始新一轮答题”获取题目。每次题目选项顺序会随机打乱。
-                </p>
+                <div className="space-y-3">
+                  <p className="rounded-xl border border-dashed border-slate-300 px-4 py-8 text-center text-sm text-slate-500">
+                    点击“开始新一轮答题”获取题目。每次题目选项顺序会随机打乱。
+                  </p>
+                  <p className="rounded-xl border border-dashed border-teal-300 bg-teal-50/50 px-4 py-4 text-center text-sm text-teal-600">
+                    或者点击“错题重练”专项攻克易错题。连续答对2次自动标记为已掌握。
+                  </p>
+                </div>
               ) : (
                 <div className="space-y-4">
                   {questions.map((question, index) => (
@@ -368,7 +614,7 @@ export function StudentDashboard({ user, token, onLogout }) {
                 </div>
               )}
 
-              {lastResult ? (
+              {lastResult && quizMode === 'normal' ? (
                 <div className="mt-4 space-y-4">
                   <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
                     本次成绩：{lastResult.score}/{lastResult.total}（正确率 {lastResult.rate}）
@@ -378,49 +624,36 @@ export function StudentDashboard({ user, token, onLogout }) {
                   )}
                 </div>
               ) : null}
+
+              {mistakeReviewResult && quizMode === 'review' ? (
+                <div className="mt-4">
+                  <MistakeReviewResult result={mistakeReviewResult} questions={questions} />
+                </div>
+              ) : null}
             </article>
           </section>
 
           <section className="space-y-5">
             <article className="rounded-3xl border border-slate-200 bg-white p-5 shadow-card">
-              <h2 className="mb-3 text-lg font-semibold text-slate-800">错题本（易错题）</h2>
-              <div className="max-h-[260px] overflow-auto rounded-xl border border-slate-200">
-                <table className="table table-sm">
-                  <thead>
-                    <tr>
-                      <th>题目</th>
-                      <th>题型</th>
-                      <th>错次</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {mistakes.map((item) => (
-                      <tr key={item.questionId}>
-                        <td
-                          className="max-w-xs truncate"
-                          title={`${item.title}\n正确答案：${item.correctOption}`}
-                        >
-                          {item.title}
-                        </td>
-                        <td>
-                          <span className={getTypeBadgeClass(item.type)}>
-                            {QUESTION_TYPE_LABELS[item.type] || '单选'}
-                          </span>
-                        </td>
-                        <td>
-                          <span className="badge badge-warning badge-outline">{item.wrongCount}</span>
-                        </td>
-                      </tr>
-                    ))}
-                    {!mistakes.length ? (
-                      <tr>
-                        <td colSpan={3} className="text-center text-slate-500">
-                          暂无错题
-                        </td>
-                      </tr>
-                    ) : null}
-                  </tbody>
-                </table>
+              <div className="mb-3 flex items-center justify-between">
+                <h2 className="text-lg font-semibold text-slate-800">错题本</h2>
+                <span className="text-xs text-slate-500">
+                  待复习 {pendingMistakes.length} / 已掌握 {masteredMistakes.length}
+                </span>
+              </div>
+              <div className="max-h-[360px] space-y-2 overflow-auto rounded-xl">
+                {mistakes.map((item) => (
+                  <MistakeItem
+                    key={item.questionId}
+                    item={item}
+                    onReview={handleSingleMistakeReview}
+                  />
+                ))}
+                {!mistakes.length ? (
+                  <div className="rounded-xl border border-dashed border-slate-300 py-8 text-center text-sm text-slate-500">
+                    暂无错题，继续保持！
+                  </div>
+                ) : null}
               </div>
             </article>
 

@@ -101,3 +101,40 @@ type SubmitResultDetail struct {
 	Rate      string         `json:"rate"`
 	Details   []AnswerDetail `json:"details"`
 }
+
+type MistakeReviewItem struct {
+	QuestionID    uint   `json:"questionId"`
+	Title         string `json:"title"`
+	WrongCount    int64  `json:"wrongCount"`
+	CorrectOption string `json:"correctOption"`
+	Type          string `json:"type"`
+	Status        string `json:"status"`
+	ReviewCount   int    `json:"reviewCount"`
+	StreakCorrect int    `json:"streakCorrect"`
+	MasteryRate   int    `json:"masteryRate"`
+}
+
+type MistakeReviewSubmitRequest struct {
+	Answers []SubmitAnswerItem `json:"answers" binding:"required,min=1,dive"`
+}
+
+type MistakeReviewAnswerDetail struct {
+	QuestionID    uint   `json:"questionId"`
+	Score         int    `json:"score"`
+	MaxScore      int    `json:"maxScore"`
+	IsCorrect     bool   `json:"isCorrect"`
+	Type          string `json:"type"`
+	IsNewlyMastered bool `json:"isNewlyMastered"`
+	WasMastered   bool   `json:"wasMastered"`
+	ReviewCount   int    `json:"reviewCount"`
+	Status        string `json:"status"`
+}
+
+type MistakeReviewResult struct {
+	Score            int                       `json:"score"`
+	Total            int                       `json:"total"`
+	Rate             string                    `json:"rate"`
+	NewlyMastered    []MistakeReviewAnswerDetail `json:"newlyMastered"`
+	StillNeedReview  []MistakeReviewAnswerDetail `json:"stillNeedReview"`
+	Details          []MistakeReviewAnswerDetail `json:"details"`
+}

@@ -80,3 +80,15 @@ export async function fetchQuestions(token, params = {}) {
 export async function fetchQuestion(token, id) {
   return apiRequest(`/teacher/questions/${id}`, { token });
 }
+
+export async function fetchMistakeReviewQuiz(token, limit = 10) {
+  return apiRequest(`/student/mistake-review/quiz?limit=${limit}`, { token });
+}
+
+export async function submitMistakeReview(token, answers) {
+  return apiRequest('/student/mistake-review/submit', {
+    method: 'POST',
+    token,
+    body: { answers },
+  });
+}
