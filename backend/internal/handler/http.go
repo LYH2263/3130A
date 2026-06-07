@@ -85,6 +85,7 @@ func (h *HTTPHandler) Router() *gin.Engine {
 				teacher.GET("/overview", h.teacherOverview)
 				teacher.GET("/class-stats", h.teacherClassStats)
 				teacher.GET("/attempts", h.teacherAttempts)
+				teacher.GET("/leaderboard", h.teacherLeaderboard)
 
 				teacher.GET("/categories", h.listCategories)
 				teacher.POST("/categories", h.createCategory)
@@ -123,6 +124,7 @@ func (h *HTTPHandler) Router() *gin.Engine {
 				student.DELETE("/draft", h.clearDraft)
 				student.GET("/explanations", h.getExplanations)
 				student.GET("/questions/:id/explanation", h.getQuestionExplanation)
+				student.GET("/leaderboard", h.studentLeaderboard)
 
 				student.POST("/favorites/:questionId", h.toggleFavorite)
 				student.DELETE("/favorites/:questionId", h.toggleFavorite)
@@ -435,6 +437,52 @@ func (h *HTTPHandler) studentAttempts(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, items)
+}
+
+func (h *HTTPHandler) studentLeaderboard(c *gin.Context) {
+	claims, ok := middleware.GetClaims(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"message": "invalid token"})
+		return
+	}
+
+	var query dto.LeaderboardQuery
+	if err := c.ShouldBindQuery(&query); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "invalid query parameters"})
+		return
+	}
+
+	query.ClassID = claims.ClassID
+
+	result, err := h.attemptSvc.GetLeaderboard(query, &claims.UserID)
+	if err != nil {
+		h.log.Error("student leaderboard failed", "error", err.Error())
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "load leaderboard failed"})
+		return
+	}
+	c.JSON(http.StatusOK, result)
+}
+
+func (h *HTTPHandler) teacherLeaderboard(c *gin.Context) {
+	_, ok := middleware.GetClaims(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"message": "invalid token"})
+		return
+	}
+
+	var query dto.LeaderboardQuery
+	if err := c.ShouldBindQuery(&query); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "invalid query parameters"})
+		return
+	}
+
+	result, err := h.attemptSvc.GetLeaderboard(query, nil)
+	if err != nil {
+		h.log.Error("teacher leaderboard failed", "error", err.Error())
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "load leaderboard failed"})
+		return
+	}
+	c.JSON(http.StatusOK, result)
 }
 
 func (h *HTTPHandler) getAttemptDetail(c *gin.Context) {

@@ -706,3 +706,273 @@ func (s *AttemptService) GetAttemptDetail(userID uint, attemptID uint) (*dto.Att
 		Answers:       answers,
 	}, nil
 }
+
+type userScore struct {
+	userID       uint
+	username     string
+	classID      uint
+	className    string
+	score        float64
+	attemptCount int
+	correctCount int
+	totalCount   int
+}
+
+func (s *AttemptService) GetLeaderboard(query dto.LeaderboardQuery, currentUserID *uint) (*dto.LeaderboardResult, error) {
+	scoreType := query.ScoreType
+	if scoreType == "" {
+		scoreType = models.LeaderboardScoreTypeHighest
+	}
+	if query.WeightedN <= 0 {
+		query.WeightedN = models.DefaultWeightedRecentN
+	}
+	if query.Limit <= 0 || query.Limit > 200 {
+		query.Limit = models.DefaultLeaderboardLimit
+	}
+	if query.Page <= 0 {
+		query.Page = 1
+	}
+
+	var attempts []models.Attempt
+	db := s.db.Preload("User").Preload("ClassRoom")
+
+	if query.ClassID != nil {
+		db = db.Where("class_id = ?", *query.ClassID)
+	}
+
+	if err := db.Order("created_at desc").Find(&attempts).Error; err != nil {
+		return nil, fmt.Errorf("load attempts for leaderboard: %w", err)
+	}
+
+	userMap := make(map[uint]*userScore)
+
+	for _, a := range attempts {
+		us, ok := userMap[a.UserID]
+		if !ok {
+			className := ""
+			classID := uint(0)
+			if a.ClassRoom.ID > 0 {
+				className = a.ClassRoom.Name
+				classID = a.ClassRoom.ID
+			}
+			us = &userScore{
+				userID:    a.UserID,
+				username:  a.User.Username,
+				classID:   classID,
+				className: className,
+			}
+			userMap[a.UserID] = us
+		}
+		us.attemptCount++
+		us.correctCount += a.Score
+		us.totalCount += a.Total
+	}
+
+	scores := make([]*userScore, 0, len(userMap))
+	for _, us := range userMap {
+		scores = append(scores, us)
+	}
+
+	for _, us := range scores {
+		switch scoreType {
+		case models.LeaderboardScoreTypeHighest:
+			us.score = calculateHighestScore(us.userID, attempts)
+		case models.LeaderboardScoreTypeAverage:
+			us.score = calculateAverageScore(us)
+		case models.LeaderboardScoreTypeWeighted:
+			us.score = calculateWeightedScore(us.userID, attempts, query.WeightedN)
+		default:
+			us.score = calculateHighestScore(us.userID, attempts)
+		}
+	}
+
+	sort.Slice(scores, func(i, j int) bool {
+		if scores[i].score != scores[j].score {
+			return scores[i].score > scores[j].score
+		}
+		return scores[i].username < scores[j].username
+	})
+
+	total := int64(len(scores))
+
+	rankedItems := buildRankedItems(scores, currentUserID)
+
+	start := (query.Page - 1) * query.Limit
+	end := start + query.Limit
+	if start >= len(rankedItems) {
+		start = 0
+		end = 0
+	}
+	if end > len(rankedItems) {
+		end = len(rankedItems)
+	}
+	pagedItems := rankedItems[start:end]
+
+	className := ""
+	if query.ClassID != nil {
+		for _, item := range rankedItems {
+			if item.ClassID == *query.ClassID {
+				className = item.ClassName
+				break
+			}
+		}
+		if className == "" {
+			var classRoom models.ClassRoom
+			if err := s.db.Where("id = ?", *query.ClassID).First(&classRoom).Error; err == nil {
+				className = classRoom.Name
+			}
+		}
+	}
+
+	var currentRank *dto.LeaderboardItem
+	gapToPrev := 0.0
+	hasPrev := false
+
+	if currentUserID != nil {
+		for i, item := range rankedItems {
+			if item.UserID == *currentUserID {
+				currentRank = &dto.LeaderboardItem{
+					Rank:          item.Rank,
+					UserID:        item.UserID,
+					Username:      item.Username,
+					ClassID:       item.ClassID,
+					ClassName:     item.ClassName,
+					Score:         item.Score,
+					ScoreDisplay:  item.ScoreDisplay,
+					AttemptCount:  item.AttemptCount,
+					CorrectRate:   item.CorrectRate,
+					IsCurrentUser: true,
+				}
+				if i > 0 {
+					prevItem := rankedItems[i-1]
+					gapToPrev = prevItem.Score - item.Score
+					hasPrev = true
+				}
+				break
+			}
+		}
+	}
+
+	return &dto.LeaderboardResult{
+		Items:       pagedItems,
+		Total:       total,
+		ScoreType:   scoreType,
+		ClassID:     query.ClassID,
+		ClassName:   className,
+		CurrentRank: currentRank,
+		GapToPrev:   gapToPrev,
+		HasPrev:     hasPrev,
+	}, nil
+}
+
+func calculateHighestScore(userID uint, attempts []models.Attempt) float64 {
+	highest := 0.0
+	for _, a := range attempts {
+		if a.UserID != userID {
+			continue
+		}
+		if a.Total > 0 {
+			rate := float64(a.Score) / float64(a.Total) * 100
+			if rate > highest {
+				highest = rate
+			}
+		}
+	}
+	return highest
+}
+
+func calculateAverageScore(us *userScore) float64 {
+	if us.totalCount == 0 {
+		return 0
+	}
+	return float64(us.correctCount) / float64(us.totalCount) * 100
+}
+
+func calculateWeightedScore(userID uint, attempts []models.Attempt, n int) float64 {
+	userAttempts := make([]models.Attempt, 0)
+	for _, a := range attempts {
+		if a.UserID == userID {
+			userAttempts = append(userAttempts, a)
+		}
+	}
+
+	sort.Slice(userAttempts, func(i, j int) bool {
+		return userAttempts[i].CreatedAt.After(userAttempts[j].CreatedAt)
+	})
+
+	if len(userAttempts) == 0 {
+		return 0
+	}
+
+	takeN := n
+	if takeN > len(userAttempts) {
+		takeN = len(userAttempts)
+	}
+
+	totalWeight := 0
+	weightedSum := 0.0
+	for i := 0; i < takeN; i++ {
+		weight := takeN - i
+		a := userAttempts[i]
+		rate := 0.0
+		if a.Total > 0 {
+			rate = float64(a.Score) / float64(a.Total) * 100
+		}
+		weightedSum += rate * float64(weight)
+		totalWeight += weight
+	}
+
+	if totalWeight == 0 {
+		return 0
+	}
+	return weightedSum / float64(totalWeight)
+}
+
+func buildRankedItems(scores []*userScore, currentUserID *uint) []dto.LeaderboardItem {
+	items := make([]dto.LeaderboardItem, 0, len(scores))
+
+	if len(scores) == 0 {
+		return items
+	}
+
+	rank := 1
+	prevScore := scores[0].score
+	sameScoreCount := 0
+
+	for i, us := range scores {
+		if i > 0 {
+			if us.score < prevScore {
+				rank = i + 1
+				prevScore = us.score
+				sameScoreCount = 0
+			} else {
+				sameScoreCount++
+			}
+		}
+
+		correctRate := "0%"
+		if us.totalCount > 0 {
+			correctRate = fmt.Sprintf("%.1f%%", float64(us.correctCount)/float64(us.totalCount)*100)
+		}
+
+		isCurrent := false
+		if currentUserID != nil && *currentUserID == us.userID {
+			isCurrent = true
+		}
+
+		items = append(items, dto.LeaderboardItem{
+			Rank:          rank,
+			UserID:        us.userID,
+			Username:      us.username,
+			ClassID:       us.classID,
+			ClassName:     us.className,
+			Score:         us.score,
+			ScoreDisplay:  fmt.Sprintf("%.1f", us.score),
+			AttemptCount:  us.attemptCount,
+			CorrectRate:   correctRate,
+			IsCurrentUser: isCurrent,
+		})
+	}
+
+	return items
+}

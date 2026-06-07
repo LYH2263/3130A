@@ -261,3 +261,35 @@ type AttemptReport struct {
 	CreatedAt      string                `json:"createdAt"`
 	Answers        []AttemptReportAnswer `json:"answers"`
 }
+
+type LeaderboardQuery struct {
+	ScoreType   string `form:"scoreType,default=highest" binding:"omitempty,oneof=highest average weighted"`
+	ClassID     *uint  `form:"classId"`
+	WeightedN   int    `form:"weightedN,default=5"`
+	Limit       int    `form:"limit,default=50"`
+	Page        int    `form:"page,default=1"`
+}
+
+type LeaderboardItem struct {
+	Rank          int     `json:"rank"`
+	UserID        uint    `json:"userId"`
+	Username      string  `json:"username"`
+	ClassID       uint    `json:"classId"`
+	ClassName     string  `json:"className"`
+	Score         float64 `json:"score"`
+	ScoreDisplay  string  `json:"scoreDisplay"`
+	AttemptCount  int     `json:"attemptCount"`
+	CorrectRate   string  `json:"correctRate"`
+	IsCurrentUser bool    `json:"isCurrentUser"`
+}
+
+type LeaderboardResult struct {
+	Items       []LeaderboardItem `json:"items"`
+	Total       int64             `json:"total"`
+	ScoreType   string            `json:"scoreType"`
+	ClassID     *uint             `json:"classId"`
+	ClassName   string            `json:"className"`
+	CurrentRank *LeaderboardItem  `json:"currentRank,omitempty"`
+	GapToPrev   float64           `json:"gapToPrev"`
+	HasPrev     bool              `json:"hasPrev"`
+}

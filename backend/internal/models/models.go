@@ -25,6 +25,13 @@ const (
 
 	MistakeReviewStatusPending  = "pending"
 	MistakeReviewStatusMastered = "mastered"
+
+	LeaderboardScoreTypeHighest   = "highest"
+	LeaderboardScoreTypeAverage   = "average"
+	LeaderboardScoreTypeWeighted  = "weighted"
+
+	DefaultLeaderboardLimit = 50
+	DefaultWeightedRecentN = 5
 )
 
 type UintArray []uint

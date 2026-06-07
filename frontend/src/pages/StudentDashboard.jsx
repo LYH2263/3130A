@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'react-hot-toast';
 
-import { apiRequest, fetchMistakeReviewQuiz, submitMistakeReview, saveDraft, getDraft, clearDraft, fetchExplanations, toggleFavorite, fetchFavoriteStatus, fetchSetQuiz, fetchAttemptDetail, fetchExamConfigs, startQuiz as startQuizApi } from '../api/client';
+import { apiRequest, fetchMistakeReviewQuiz, submitMistakeReview, saveDraft, getDraft, clearDraft, fetchExplanations, toggleFavorite, fetchFavoriteStatus, fetchSetQuiz, fetchAttemptDetail, fetchExamConfigs, startQuiz as startQuizApi, fetchStudentLeaderboard } from '../api/client';
 import { CountdownTimer } from '../components/CountdownTimer';
 import { FavoritesAndSets } from './FavoritesAndSets';
 import { StatCard } from '../components/StatCard';
@@ -670,6 +670,9 @@ export function StudentDashboard({ user, token, onLogout }) {
   const [startedAt, setStartedAt] = useState(null);
   const [allowEarlySubmit, setAllowEarlySubmit] = useState(true);
   const [isAutoSubmitting, setIsAutoSubmitting] = useState(false);
+  const [leaderboard, setLeaderboard] = useState(null);
+  const [leaderboardLoading, setLeaderboardLoading] = useState(false);
+  const [leaderboardScoreType, setLeaderboardScoreType] = useState('highest');
   const saveDraftTimerRef = useRef(null);
   const saveDraftStatusTimerRef = useRef(null);
   const hasAutoSubmittedRef = useRef(false);
@@ -711,12 +714,35 @@ export function StudentDashboard({ user, token, onLogout }) {
       if (defaultConfig && !selectedExamConfigId) {
         setSelectedExamConfigId(defaultConfig.id);
       }
+      loadLeaderboard();
     } catch (error) {
       toast.error(error.message || '加载学生数据失败');
     } finally {
       setLoading(false);
     }
   };
+
+  const loadLeaderboard = async () => {
+    setLeaderboardLoading(true);
+    try {
+      const data = await fetchStudentLeaderboard(token, {
+        scoreType: leaderboardScoreType,
+        limit: 20,
+      });
+      setLeaderboard(data);
+    } catch (error) {
+      console.warn('加载排行榜失败:', error);
+    } finally {
+      setLeaderboardLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (token) {
+      loadLeaderboard();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [leaderboardScoreType, token]);
 
   useEffect(() => {
     loadStudentData();
@@ -1381,6 +1407,132 @@ export function StudentDashboard({ user, token, onLogout }) {
           </section>
 
           <section className="space-y-5">
+            <article className="rounded-3xl border border-slate-200 bg-white p-5 shadow-card">
+              <div className="mb-3 flex items-center justify-between">
+                <h2 className="text-lg font-semibold text-slate-800">🏆 班级排行榜</h2>
+                <span className="text-xs text-slate-500">
+                  共 {leaderboard?.total || 0} 人
+                </span>
+              </div>
+
+              <div className="mb-3 tabs tabs-boxed bg-slate-100/50 tabs-sm">
+                <button
+                  className={`tab ${leaderboardScoreType === 'highest' ? 'tab-active' : ''}`}
+                  onClick={() => setLeaderboardScoreType('highest')}
+                >
+                  最高分
+                </button>
+                <button
+                  className={`tab ${leaderboardScoreType === 'average' ? 'tab-active' : ''}`}
+                  onClick={() => setLeaderboardScoreType('average')}
+                >
+                  平均正确率
+                </button>
+                <button
+                  className={`tab ${leaderboardScoreType === 'weighted' ? 'tab-active' : ''}`}
+                  onClick={() => setLeaderboardScoreType('weighted')}
+                >
+                  近5次加权
+                </button>
+              </div>
+
+              {leaderboard?.currentRank && (
+                <div className="mb-3 rounded-xl border-2 border-sky-300 bg-sky-50 p-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <span className="flex h-10 w-10 items-center justify-center rounded-full bg-sky-500 text-sm font-bold text-white">
+                        {leaderboard.currentRank.rank}
+                      </span>
+                      <div>
+                        <p className="text-sm font-medium text-slate-800">
+                          我的排名
+                        </p>
+                        <p className="text-xs text-slate-500">
+                          得分：{leaderboard.currentRank.scoreDisplay}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      {leaderboard.hasPrev ? (
+                        <div className="text-xs text-amber-600">
+                          距上一名差
+                          <span className="ml-1 font-bold text-amber-700">
+                            {leaderboard.gapToPrev.toFixed(1)}
+                          </span>
+                          <span className="ml-0.5">分</span>
+                        </div>
+                      ) : (
+                        <span className="text-xs text-emerald-600 font-medium">
+                          🎉 第一名！
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div className="max-h-[280px] space-y-1.5 overflow-auto rounded-xl">
+                {leaderboardLoading ? (
+                  <div className="flex items-center justify-center py-8">
+                    <span className="loading loading-spinner loading-md text-sky-600"></span>
+                  </div>
+                ) : leaderboard?.items?.length > 0 ? (
+                  leaderboard.items.map((item, idx) => {
+                    const isTop3 = item.rank <= 3;
+                    const medalEmoji = item.rank === 1 ? '🥇' : item.rank === 2 ? '🥈' : item.rank === 3 ? '🥉' : null;
+
+                    return (
+                      <div
+                        key={`${item.userId}-${idx}`}
+                        className={`flex items-center gap-3 rounded-lg px-3 py-2 transition-colors ${
+                          item.isCurrentUser
+                            ? 'bg-sky-100 border border-sky-300'
+                            : isTop3
+                            ? 'bg-amber-50/50'
+                            : 'hover:bg-slate-50'
+                        }`}
+                      >
+                        <div className="w-8 text-center">
+                          {medalEmoji ? (
+                            <span className="text-xl">{medalEmoji}</span>
+                          ) : (
+                            <span className="text-sm font-medium text-slate-500">
+                              {item.rank}
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className={`text-sm font-medium truncate ${
+                            item.isCurrentUser ? 'text-sky-700' : 'text-slate-700'
+                          }`}>
+                            {item.username}
+                            {item.isCurrentUser && (
+                              <span className="ml-1 text-xs text-sky-500">（我）</span>
+                            )}
+                          </p>
+                          <p className="text-xs text-slate-400">
+                            答题 {item.attemptCount} 次 · 正确率 {item.correctRate}
+                          </p>
+                        </div>
+                        <div className="text-right">
+                          <span className={`text-sm font-bold ${
+                            isTop3 ? 'text-amber-600' : 'text-slate-700'
+                          }`}>
+                            {item.scoreDisplay}
+                          </span>
+                          <p className="text-xs text-slate-400">分</p>
+                        </div>
+                      </div>
+                    );
+                  })
+                ) : (
+                  <div className="rounded-xl border border-dashed border-slate-300 py-8 text-center text-sm text-slate-500">
+                    暂无排名数据
+                  </div>
+                )}
+              </div>
+            </article>
+
             <article className="rounded-3xl border border-slate-200 bg-white p-5 shadow-card">
               <div className="mb-3 flex items-center justify-between">
                 <h2 className="text-lg font-semibold text-slate-800">错题本</h2>

@@ -8,6 +8,7 @@ import {
   fetchKnowledgePoints,
   fetchQuestions,
   fetchQuestion,
+  fetchTeacherLeaderboard,
 } from '../api/client';
 import { QuestionEditorModal } from '../components/QuestionEditorModal';
 import { StatCard } from '../components/StatCard';
@@ -112,18 +113,28 @@ export function TeacherDashboard({ user, token, onLogout }) {
   const tableContainerRef = useRef(null);
   const scrollPositionRef = useRef(0);
 
+  const [leaderboard, setLeaderboard] = useState(null);
+  const [leaderboardLoading, setLeaderboardLoading] = useState(false);
+  const [leaderboardScoreType, setLeaderboardScoreType] = useState('highest');
+  const [leaderboardClassId, setLeaderboardClassId] = useState('');
+  const [classes, setClasses] = useState([]);
+  const [leaderboardPage, setLeaderboardPage] = useState(1);
+  const [leaderboardPageSize, setLeaderboardPageSize] = useState(20);
+  const [leaderboardWeightedN, setLeaderboardWeightedN] = useState(5);
+
   const topStats = useMemo(() => stats.slice(0, 12), [stats]);
 
   const loadDashboard = async () => {
     setLoading(true);
     try {
-      const [overviewData, statData, attemptData, categoryData, tagData, kpData] = await Promise.all([
+      const [overviewData, statData, attemptData, categoryData, tagData, kpData, classData] = await Promise.all([
         apiRequest('/teacher/overview', { token }),
         apiRequest('/teacher/class-stats', { token }),
         apiRequest('/teacher/attempts?limit=50', { token }),
         fetchCategories(token),
         fetchTags(token),
         fetchKnowledgePoints(token),
+        apiRequest('/classes', { token }),
       ]);
       setOverview(overviewData);
       setStats(statData);
@@ -131,15 +142,47 @@ export function TeacherDashboard({ user, token, onLogout }) {
       setCategories(categoryData);
       setTags(tagData);
       setKnowledgePoints(kpData);
+      setClasses(classData || []);
       if (categoryData && categoryData.length > 0) {
         setExpandedCategoryIds(categoryData.map((c) => c.id));
       }
+      loadLeaderboard();
     } catch (error) {
       toast.error(error.message || '加载教师看板失败');
     } finally {
       setLoading(false);
     }
   };
+
+  const loadLeaderboard = async () => {
+    setLeaderboardLoading(true);
+    try {
+      const params = {
+        scoreType: leaderboardScoreType,
+        limit: leaderboardPageSize,
+        page: leaderboardPage,
+      };
+      if (leaderboardClassId) {
+        params.classId = leaderboardClassId;
+      }
+      if (leaderboardScoreType === 'weighted') {
+        params.weightedN = leaderboardWeightedN;
+      }
+      const data = await fetchTeacherLeaderboard(token, params);
+      setLeaderboard(data);
+    } catch (error) {
+      console.warn('加载排行榜失败:', error);
+    } finally {
+      setLeaderboardLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (token && !loading) {
+      loadLeaderboard();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [leaderboardScoreType, leaderboardClassId, leaderboardPage, leaderboardPageSize, leaderboardWeightedN, token]);
 
   const loadQuestions = async () => {
     if (tableContainerRef.current) {
@@ -699,6 +742,189 @@ export function TeacherDashboard({ user, token, onLogout }) {
                 </div>
               </div>
             </article>
+          </section>
+
+          <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-card">
+            <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div>
+                <h2 className="text-lg font-semibold text-slate-800">🏆 班级排行榜</h2>
+                <p className="text-xs text-slate-500 mt-1">
+                  {leaderboard?.className ? leaderboard.className + '班' : '全校'} · 共 {leaderboard?.total || 0} 名学生
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2 items-center">
+                <select
+                  className="select select-bordered select-sm w-40"
+                  value={leaderboardClassId}
+                  onChange={(e) => {
+                    setLeaderboardClassId(e.target.value);
+                    setLeaderboardPage(1);
+                  }}
+                >
+                  <option value="">全校榜</option>
+                  {classes.map((cls) => (
+                    <option key={cls.id} value={cls.id}>
+                      {cls.name}
+                    </option>
+                  ))}
+                </select>
+
+                <div className="tabs tabs-boxed bg-slate-100/50 tabs-sm">
+                  <button
+                    className={`tab ${leaderboardScoreType === 'highest' ? 'tab-active' : ''}`}
+                    onClick={() => {
+                      setLeaderboardScoreType('highest');
+                      setLeaderboardPage(1);
+                    }}
+                  >
+                    最高分
+                  </button>
+                  <button
+                    className={`tab ${leaderboardScoreType === 'average' ? 'tab-active' : ''}`}
+                    onClick={() => {
+                      setLeaderboardScoreType('average');
+                      setLeaderboardPage(1);
+                    }}
+                  >
+                    平均正确率
+                  </button>
+                  <button
+                    className={`tab ${leaderboardScoreType === 'weighted' ? 'tab-active' : ''}`}
+                    onClick={() => {
+                      setLeaderboardScoreType('weighted');
+                      setLeaderboardPage(1);
+                    }}
+                  >
+                    加权近N次
+                  </button>
+                </div>
+
+                {leaderboardScoreType === 'weighted' && (
+                  <select
+                    className="select select-bordered select-sm w-32"
+                    value={leaderboardWeightedN}
+                    onChange={(e) => {
+                      setLeaderboardWeightedN(Number(e.target.value));
+                      setLeaderboardPage(1);
+                    }}
+                  >
+                    <option value={3}>近3次</option>
+                    <option value={5}>近5次</option>
+                    <option value={10}>近10次</option>
+                    <option value={20}>近20次</option>
+                  </select>
+                )}
+              </div>
+            </div>
+
+            <div className="relative overflow-auto rounded-xl border border-slate-200">
+              {leaderboardLoading && (
+                <div className="absolute inset-0 z-10 flex items-center justify-center bg-white/70 backdrop-blur-sm">
+                  <span className="loading loading-spinner loading-md text-sky-600"></span>
+                </div>
+              )}
+              <table className="table table-sm">
+                <thead>
+                  <tr>
+                    <th className="w-16">排名</th>
+                    <th>学生</th>
+                    <th>班级</th>
+                    <th>答题次数</th>
+                    <th>正确率</th>
+                    <th>综合得分</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {leaderboard?.items?.length > 0 ? (
+                    leaderboard.items.map((item, idx) => {
+                      const isTop3 = item.rank <= 3;
+                      const medalEmoji = item.rank === 1 ? '🥇' : item.rank === 2 ? '🥈' : item.rank === 3 ? '🥉' : null;
+
+                      return (
+                        <tr
+                          key={`${item.userId}-${idx}`}
+                          className={isTop3 ? 'bg-amber-50/30' : ''}
+                        >
+                          <td>
+                            {medalEmoji ? (
+                              <span className="text-xl">{medalEmoji}</span>
+                            ) : (
+                              <span className="font-mono text-sm text-slate-600">{item.rank}</span>
+                            )}
+                          </td>
+                          <td className="font-medium text-slate-700">{item.username}</td>
+                          <td className="text-xs text-slate-500">
+                            {item.className || '-'}
+                          </td>
+                          <td>
+                            <span className="badge badge-outline badge-xs">
+                              {item.attemptCount} 次
+                            </span>
+                          </td>
+                          <td>
+                            <span className="badge badge-info badge-outline badge-xs">
+                              {item.correctRate}
+                            </span>
+                          </td>
+                          <td>
+                            <span className={`font-bold ${
+                              isTop3 ? 'text-amber-600' : 'text-slate-700'
+                            }`}>
+                              {item.scoreDisplay}
+                            </span>
+                            <span className="text-xs text-slate-400 ml-1">分</span>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  ) : (
+                    <tr>
+                      <td colSpan={6} className="text-center text-slate-500 py-8">
+                        暂无排名数据
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {leaderboard && leaderboard.total > 0 && (
+              <div className="mt-3 flex items-center justify-between">
+                <div className="text-xs text-slate-500">
+                  共 {leaderboard.total} 人，第 {leaderboardPage}/{Math.ceil(leaderboard.total / leaderboardPageSize) || 1} 页
+                </div>
+                <div className="flex gap-1 items-center">
+                  <button
+                    className="btn btn-xs btn-outline"
+                    onClick={() => setLeaderboardPage((p) => Math.max(1, p - 1))}
+                    disabled={leaderboardPage <= 1 || leaderboardLoading}
+                  >
+                    上一页
+                  </button>
+                  <span className="text-xs text-slate-500 px-1">{leaderboardPage}</span>
+                  <button
+                    className="btn btn-xs btn-outline"
+                    onClick={() => setLeaderboardPage((p) => p + 1)}
+                    disabled={leaderboardPage * leaderboardPageSize >= leaderboard.total || leaderboardLoading}
+                  >
+                    下一页
+                  </button>
+                  <select
+                    className="select select-bordered select-xs w-20 ml-2"
+                    value={leaderboardPageSize}
+                    onChange={(e) => {
+                      setLeaderboardPageSize(Number(e.target.value));
+                      setLeaderboardPage(1);
+                    }}
+                    disabled={leaderboardLoading}
+                  >
+                    <option value={10}>10/页</option>
+                    <option value={20}>20/页</option>
+                    <option value={50}>50/页</option>
+                  </select>
+                </div>
+              </div>
+            )}
           </section>
 
           <section className="grid gap-5 lg:grid-cols-[1.2fr,0.8fr]">

@@ -280,3 +280,24 @@ export async function startQuiz(token, data = {}) {
     body: data,
   });
 }
+
+export async function fetchStudentLeaderboard(token, params = {}) {
+  const query = new URLSearchParams();
+  if (params.scoreType) query.append('scoreType', params.scoreType);
+  if (params.weightedN) query.append('weightedN', params.weightedN);
+  if (params.limit) query.append('limit', params.limit);
+  if (params.page) query.append('page', params.page);
+  const queryString = query.toString();
+  return apiRequest(`/student/leaderboard${queryString ? '?' + queryString : ''}`, { token });
+}
+
+export async function fetchTeacherLeaderboard(token, params = {}) {
+  const query = new URLSearchParams();
+  if (params.scoreType) query.append('scoreType', params.scoreType);
+  if (params.classId) query.append('classId', params.classId);
+  if (params.weightedN) query.append('weightedN', params.weightedN);
+  if (params.limit) query.append('limit', params.limit);
+  if (params.page) query.append('page', params.page);
+  const queryString = query.toString();
+  return apiRequest(`/teacher/leaderboard${queryString ? '?' + queryString : ''}`, { token });
+}
