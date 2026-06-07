@@ -166,7 +166,7 @@ func (s *QuestionService) QueryQuestions(query dto.QuestionQuery, categorySvc *C
 	}
 
 	var total int64
-	if err := db.Count(&total).Error; err != nil {
+	if err := db.Session(&gorm.Session{}).Count(&total).Error; err != nil {
 		return nil, fmt.Errorf("count questions: %w", err)
 	}
 
@@ -204,24 +204,43 @@ func (s *QuestionService) QueryQuestions(query dto.QuestionQuery, categorySvc *C
 		WrongCount int64 `gorm:"column:wrong_count"`
 	}
 
-	var questions []questionWithWrongCount
-	queryBuilder := db.Select("questions.*, (?) as wrong_count", wrongCountSubQuery).
-		Preload("Category").Preload("Tags").Preload("KnowledgePoints").Preload("Explanation").
-		Preload("Options").Preload("BlankAnswers")
-
-	if sortBy == "wrong_count" {
-		queryBuilder = queryBuilder.Order(orderClause)
-	} else {
-		queryBuilder = queryBuilder.Order(orderClause)
-	}
-
-	if err := queryBuilder.Limit(pageSize).Offset(offset).Find(&questions).Error; err != nil {
+	var rows []questionWithWrongCount
+	if err := db.Session(&gorm.Session{}).
+		Select("questions.*, (?) as wrong_count", wrongCountSubQuery).
+		Order(orderClause).
+		Limit(pageSize).Offset(offset).
+		Find(&rows).Error; err != nil {
 		return nil, fmt.Errorf("query questions: %w", err)
 	}
 
-	creatorIDs := make([]uint, 0, len(questions))
-	for _, q := range questions {
-		if q.CreatedBy > 0 {
+	orderedIDs := make([]uint, 0, len(rows))
+	wrongCountMap := make(map[uint]int64, len(rows))
+	for _, r := range rows {
+		orderedIDs = append(orderedIDs, r.ID)
+		wrongCountMap[r.ID] = r.WrongCount
+	}
+
+	// Load associations on the real Question model. Preloading the many2many
+	// relations (Tags/KnowledgePoints) directly on the wrapper struct above
+	// makes GORM derive a wrong join column name (question_with_wrong_count_id)
+	// and fail, so association loading is done here on models.Question.
+	questionMap := make(map[uint]models.Question, len(rows))
+	if len(orderedIDs) > 0 {
+		var fullQuestions []models.Question
+		if err := s.db.
+			Preload("Category").Preload("Tags").Preload("KnowledgePoints").Preload("Explanation").
+			Preload("Options").Preload("BlankAnswers").
+			Where("id IN ?", orderedIDs).Find(&fullQuestions).Error; err != nil {
+			return nil, fmt.Errorf("load question associations: %w", err)
+		}
+		for _, q := range fullQuestions {
+			questionMap[q.ID] = q
+		}
+	}
+
+	creatorIDs := make([]uint, 0, len(rows))
+	for _, id := range orderedIDs {
+		if q, ok := questionMap[id]; ok && q.CreatedBy > 0 {
 			creatorIDs = append(creatorIDs, q.CreatedBy)
 		}
 	}
@@ -236,8 +255,12 @@ func (s *QuestionService) QueryQuestions(query dto.QuestionQuery, categorySvc *C
 		}
 	}
 
-	items := make([]dto.QuestionDetail, 0, len(questions))
-	for _, q := range questions {
+	items := make([]dto.QuestionDetail, 0, len(rows))
+	for _, id := range orderedIDs {
+		q, ok := questionMap[id]
+		if !ok {
+			continue
+		}
 		categoryName := ""
 		if q.Category != nil {
 			categoryName = q.Category.Name
@@ -292,7 +315,7 @@ func (s *QuestionService) QueryQuestions(query dto.QuestionQuery, categorySvc *C
 			ExplanationContent: expContent,
 			ExplanationRefs:    expRefs,
 			KnowledgePoints:    toKnowledgePointInfos(q.KnowledgePoints),
-			WrongCount:         q.WrongCount,
+			WrongCount:         wrongCountMap[id],
 			HasAnswerError:     hasError,
 			CreatedAt:          q.CreatedAt.Format("2006-01-02 15:04:05"),
 			UpdatedAt:          q.UpdatedAt.Format("2006-01-02 15:04:05"),

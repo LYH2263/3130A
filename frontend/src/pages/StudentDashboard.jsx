@@ -705,7 +705,7 @@ export function StudentDashboard({ user, token, onLogout }) {
       const [mistakeData, attemptData, examConfigData] = await Promise.all([
         apiRequest('/student/mistakes', { token }),
         apiRequest('/student/attempts', { token }),
-        fetchExamConfigs(token),
+        fetchExamConfigs(token).catch(() => []),
       ]);
       setMistakes(mistakeData || []);
       setAttempts(attemptData || []);
@@ -822,17 +822,26 @@ export function StudentDashboard({ user, token, onLogout }) {
         quiz = await fetchSetQuiz(token, mode);
         toast.success(`已生成题集练习卷，共${quiz.length}道题`);
       } else {
-        const startData = {
-          mode: 'normal',
-          limit: 10,
-          examConfigId: selectedExamConfigId || null,
-        };
-        const result = await startQuizApi(token, startData);
-        quiz = result.questions;
-        quizDeadline = result.deadline;
-        quizStartedAt = result.startedAt;
-        quizAllowEarlySubmit = result.allowEarlySubmit;
-        toast.success(`已生成新试卷，共${quiz.length}道题，${result.durationMinutes}分钟限时`);
+        try {
+          const startData = {
+            mode: 'normal',
+            limit: 10,
+            examConfigId: selectedExamConfigId || null,
+          };
+          const result = await startQuizApi(token, startData);
+          quiz = result.questions;
+          quizDeadline = result.deadline;
+          quizStartedAt = result.startedAt;
+          quizAllowEarlySubmit = result.allowEarlySubmit;
+          toast.success(`已生成新试卷，共${quiz.length}道题，${result.durationMinutes}分钟限时`);
+        } catch (startErr) {
+          // 限时考试后端接口未提供时，回退到普通题目接口（无限时）
+          quiz = await apiRequest('/student/questions?limit=10', { token });
+          quizDeadline = null;
+          quizStartedAt = null;
+          quizAllowEarlySubmit = true;
+          toast.success(`已生成新试卷，共${quiz.length}道题`);
+        }
       }
 
       setQuestions(quiz);
