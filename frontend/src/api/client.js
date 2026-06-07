@@ -237,3 +237,7 @@ export async function reorderSetQuestions(token, setId, questionIds) {
 export async function fetchSetQuiz(token, setId) {
   return apiRequest(`/student/question-sets/${setId}/quiz`, { token });
 }
+
+export async function fetchAttemptDetail(token, attemptId) {
+  return apiRequest(`/student/attempts/${attemptId}`, { token });
+}

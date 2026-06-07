@@ -229,3 +229,35 @@ type ReorderSetQuestionsRequest struct {
 type BatchFavoriteStatusRequest struct {
 	QuestionIDs []uint `json:"questionIds"`
 }
+
+type AttemptReportOption struct {
+	ID        uint   `json:"id"`
+	Content   string `json:"content"`
+	IsCorrect bool   `json:"isCorrect"`
+}
+
+type AttemptReportAnswer struct {
+	QuestionID       uint                 `json:"questionId"`
+	QuestionTitle    string               `json:"questionTitle"`
+	QuestionType     string               `json:"questionType"`
+	Score            int                  `json:"score"`
+	MaxScore         int                  `json:"maxScore"`
+	IsCorrect        bool                 `json:"isCorrect"`
+	Options          []AttemptReportOption `json:"options,omitempty"`
+	SelectedOptionID uint                 `json:"selectedOptionId,omitempty"`
+	SelectedOptionIDs []uint              `json:"selectedOptionIds,omitempty"`
+	BlankAnswer      string               `json:"blankAnswer,omitempty"`
+	CorrectBlankAnswers []string          `json:"correctBlankAnswers,omitempty"`
+}
+
+type AttemptReport struct {
+	ID             uint                  `json:"id"`
+	Score          int                   `json:"score"`
+	Total          int                   `json:"total"`
+	Rate           string                `json:"rate"`
+	CorrectCount   int                   `json:"correctCount"`
+	WrongCount     int                   `json:"wrongCount"`
+	QuestionCount  int                   `json:"questionCount"`
+	CreatedAt      string                `json:"createdAt"`
+	Answers        []AttemptReportAnswer `json:"answers"`
+}

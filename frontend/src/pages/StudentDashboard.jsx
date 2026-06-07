@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'react-hot-toast';
 
-import { apiRequest, fetchMistakeReviewQuiz, submitMistakeReview, saveDraft, getDraft, clearDraft, fetchExplanations, toggleFavorite, fetchFavoriteStatus, fetchSetQuiz } from '../api/client';
+import { apiRequest, fetchMistakeReviewQuiz, submitMistakeReview, saveDraft, getDraft, clearDraft, fetchExplanations, toggleFavorite, fetchFavoriteStatus, fetchSetQuiz, fetchAttemptDetail } from '../api/client';
 import { FavoritesAndSets } from './FavoritesAndSets';
 import { StatCard } from '../components/StatCard';
 import { QUESTION_TYPE_LABELS } from '../utils/validators';
@@ -451,6 +451,196 @@ function MistakeItem({ item, onReview }) {
   );
 }
 
+function ReportQuestionItem({ answer, index }) {
+  const typeLabel = QUESTION_TYPE_LABELS[answer.questionType] || '单选题';
+  const isBlank = answer.questionType === 'blank';
+
+  const isOptionSelected = (optId) => {
+    if (answer.questionType === 'single' || answer.questionType === 'judge') {
+      return answer.selectedOptionId === optId;
+    }
+    if (answer.questionType === 'multiple') {
+      return (answer.selectedOptionIds || []).includes(optId);
+    }
+    return false;
+  };
+
+  const getOptionClass = (opt) => {
+    const selected = isOptionSelected(opt.id);
+    if (opt.isCorrect) {
+      return selected
+        ? 'border-emerald-400 bg-emerald-50 text-emerald-800'
+        : 'border-emerald-300 bg-emerald-50/50 text-emerald-700';
+    }
+    if (selected && !opt.isCorrect) {
+      return 'border-red-400 bg-red-50 text-red-700';
+    }
+    return 'border-slate-200 bg-white text-slate-600';
+  };
+
+  return (
+    <div className={`rounded-xl border p-4 ${
+      answer.isCorrect ? 'border-emerald-200 bg-emerald-50/30' : 'border-red-200 bg-red-50/30'
+    }`}>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-semibold text-slate-700">
+              {index + 1}. {answer.questionTitle}
+            </span>
+          </div>
+          <div className="mt-1 flex items-center gap-2">
+            <span className={getTypeBadgeClass(answer.questionType)}>{typeLabel}</span>
+            <span className={`badge badge-xs ${answer.isCorrect ? 'badge-success' : 'badge-error'}`}>
+              {answer.isCorrect ? '答对' : '答错'}
+            </span>
+          </div>
+        </div>
+        <span className="text-xs font-mono text-slate-500 shrink-0">
+          {answer.score}/{answer.maxScore}分
+        </span>
+      </div>
+
+      {!isBlank && answer.options && answer.options.length > 0 && (
+        <div className="mt-3 grid gap-2">
+          {answer.options.map((opt) => (
+            <div
+              key={opt.id}
+              className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-sm ${getOptionClass(opt)}`}
+            >
+              {answer.questionType === 'multiple' ? (
+                <input
+                  type="checkbox"
+                  className="checkbox checkbox-xs"
+                  checked={isOptionSelected(opt.id)}
+                  readOnly
+                />
+              ) : (
+                <input
+                  type="radio"
+                  className="radio radio-xs"
+                  checked={isOptionSelected(opt.id)}
+                  readOnly
+                />
+              )}
+              <span className="flex-1">{opt.content}</span>
+              {opt.isCorrect && (
+                <span className="text-xs font-semibold text-emerald-600">✓ 正确答案</span>
+              )}
+              {isOptionSelected(opt.id) && !opt.isCorrect && (
+                <span className="text-xs font-semibold text-red-600">✗ 你的选择</span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {isBlank && (
+        <div className="mt-3 space-y-2">
+          <div className="rounded-lg border border-red-300 bg-red-50 px-3 py-2">
+            <span className="text-xs font-medium text-red-600">你的答案：</span>
+            <span className="text-sm text-red-700 ml-1">
+              {answer.blankAnswer || '（未作答）'}
+            </span>
+          </div>
+          <div className="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2">
+            <span className="text-xs font-medium text-emerald-600">正确答案：</span>
+            <span className="text-sm text-emerald-700 ml-1">
+              {(answer.correctBlankAnswers || []).join(' / ')}
+            </span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AttemptReportModal({ report, loading, onClose, onReviewWrong }) {
+  if (!report && !loading) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="flex h-[85vh] w-full max-w-3xl flex-col rounded-2xl bg-white shadow-xl">
+        <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4">
+          <div>
+            <h3 className="text-lg font-semibold text-slate-800">答题报告</h3>
+            {report?.createdAt && (
+              <p className="text-xs text-slate-500 mt-0.5">答题时间：{report.createdAt}</p>
+            )}
+          </div>
+          <button
+            className="btn btn-sm btn-ghost btn-circle"
+            onClick={onClose}
+            disabled={loading}
+          >
+            ✕
+          </button>
+        </div>
+
+        {loading ? (
+          <div className="flex flex-1 items-center justify-center">
+            <div className="text-center">
+              <div className="loading loading-spinner loading-lg text-primary"></div>
+              <p className="mt-3 text-sm text-slate-500">加载报告中...</p>
+            </div>
+          </div>
+        ) : report ? (
+          <>
+            <div className="grid grid-cols-4 gap-3 border-b border-slate-200 px-6 py-4">
+              <div className="rounded-xl bg-sky-50 p-3 text-center">
+                <p className="text-xs text-sky-600">总分</p>
+                <p className="text-xl font-bold text-sky-700">
+                  {report.score}/{report.total}
+                </p>
+              </div>
+              <div className="rounded-xl bg-emerald-50 p-3 text-center">
+                <p className="text-xs text-emerald-600">正确率</p>
+                <p className="text-xl font-bold text-emerald-700">{report.rate}</p>
+              </div>
+              <div className="rounded-xl bg-emerald-50 p-3 text-center">
+                <p className="text-xs text-emerald-600">答对</p>
+                <p className="text-xl font-bold text-emerald-700">{report.correctCount}</p>
+              </div>
+              <div className="rounded-xl bg-red-50 p-3 text-center">
+                <p className="text-xs text-red-600">答错</p>
+                <p className="text-xl font-bold text-red-700">{report.wrongCount}</p>
+              </div>
+            </div>
+
+            {report.wrongCount > 0 && (
+              <div className="px-6 py-3 border-b border-slate-200">
+                <button
+                  className="btn btn-sm btn-secondary w-full"
+                  onClick={onReviewWrong}
+                >
+                  📝 重练本次错题
+                </button>
+              </div>
+            )}
+
+            <div className="flex-1 overflow-auto px-6 py-4">
+              <div className="space-y-3">
+                <h4 className="text-sm font-semibold text-slate-700">
+                  答题详情（共 {report.questionCount} 题）
+                </h4>
+                {report.answers.map((ans, idx) => (
+                  <ReportQuestionItem key={ans.questionId} answer={ans} index={idx} />
+                ))}
+              </div>
+            </div>
+
+            <div className="border-t border-slate-200 px-6 py-3">
+              <button className="btn btn-primary w-full" onClick={onClose}>
+                关闭
+              </button>
+            </div>
+          </>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 export function StudentDashboard({ user, token, onLogout }) {
   const [loading, setLoading] = useState(true);
   const [questions, setQuestions] = useState([]);
@@ -470,6 +660,9 @@ export function StudentDashboard({ user, token, onLogout }) {
   const [pendingStartMode, setPendingStartMode] = useState(null);
   const [favoriteStatus, setFavoriteStatus] = useState({});
   const [activeTab, setActiveTab] = useState('quiz');
+  const [showReportModal, setShowReportModal] = useState(false);
+  const [reportData, setReportData] = useState(null);
+  const [reportLoading, setReportLoading] = useState(false);
   const saveDraftTimerRef = useRef(null);
   const saveDraftStatusTimerRef = useRef(null);
 
@@ -625,6 +818,57 @@ export function StudentDashboard({ user, token, onLogout }) {
       toast.error(error.message || '拉取题集失败');
     } finally {
       setLoadingQuiz(false);
+    }
+  };
+
+  const handleViewReport = async (attemptId) => {
+    try {
+      setReportLoading(true);
+      setShowReportModal(true);
+      const report = await fetchAttemptDetail(token, attemptId);
+      setReportData(report);
+    } catch (error) {
+      toast.error(error.message || '加载报告失败');
+      setShowReportModal(false);
+    } finally {
+      setReportLoading(false);
+    }
+  };
+
+  const handleCloseReport = () => {
+    setShowReportModal(false);
+    setReportData(null);
+  };
+
+  const handleReviewWrongFromReport = async () => {
+    if (!reportData || reportData.wrongCount === 0) {
+      toast.error('本次没有错题');
+      return;
+    }
+    try {
+      setReportLoading(true);
+      const quiz = await fetchMistakeReviewQuiz(token, 20);
+      const wrongIds = reportData.answers.filter(a => !a.isCorrect).map(a => a.questionId);
+      const filtered = quiz.filter(q => wrongIds.includes(q.id));
+      const questionsToUse = filtered.length > 0 ? filtered : quiz.slice(0, wrongIds.length);
+      if (questionsToUse.length === 0) {
+        toast.error('没有可重练的错题');
+        return;
+      }
+      setQuestions(questionsToUse);
+      setAnswers({});
+      setLastResult(null);
+      setMistakeReviewResult(null);
+      setQuizMode('review');
+      setActiveTab('quiz');
+      setShowReportModal(false);
+      setReportData(null);
+      toast.success(`已生成错题重练卷，共${questionsToUse.length}道题`);
+      loadFavoriteStatus(questionsToUse.map((q) => q.id));
+    } catch (error) {
+      toast.error(error.message || '生成错题重练卷失败');
+    } finally {
+      setReportLoading(false);
     }
   };
 
@@ -1040,6 +1284,7 @@ export function StudentDashboard({ user, token, onLogout }) {
                     <tr>
                       <th>成绩</th>
                       <th>时间</th>
+                      <th>操作</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1053,11 +1298,19 @@ export function StudentDashboard({ user, token, onLogout }) {
                         <td className="text-xs text-slate-500">
                           {new Date(item.createdAt).toLocaleString()}
                         </td>
+                        <td>
+                          <button
+                            className="btn btn-xs btn-primary btn-outline"
+                            onClick={() => handleViewReport(item.id)}
+                          >
+                            查看报告
+                          </button>
+                        </td>
                       </tr>
                     ))}
                     {!attempts.length ? (
                       <tr>
-                        <td colSpan={2} className="text-center text-slate-500">
+                        <td colSpan={3} className="text-center text-slate-500">
                           暂无记录
                         </td>
                       </tr>
@@ -1098,6 +1351,13 @@ export function StudentDashboard({ user, token, onLogout }) {
           </div>
         </div>
       )}
+
+      <AttemptReportModal
+        report={reportData}
+        loading={reportLoading}
+        onClose={handleCloseReport}
+        onReviewWrong={handleReviewWrongFromReport}
+      />
     </div>
   );
 }

@@ -115,6 +115,7 @@ func (h *HTTPHandler) Router() *gin.Engine {
 				student.POST("/submit", h.submit)
 				student.GET("/mistakes", h.studentMistakes)
 				student.GET("/attempts", h.studentAttempts)
+				student.GET("/attempts/:id", h.getAttemptDetail)
 				student.GET("/mistake-review/quiz", h.mistakeReviewQuiz)
 				student.POST("/mistake-review/submit", h.mistakeReviewSubmit)
 				student.POST("/draft", h.saveDraft)
@@ -436,6 +437,25 @@ func (h *HTTPHandler) studentAttempts(c *gin.Context) {
 	c.JSON(http.StatusOK, items)
 }
 
+func (h *HTTPHandler) getAttemptDetail(c *gin.Context) {
+	claims, ok := middleware.GetClaims(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"message": "invalid token"})
+		return
+	}
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "invalid attempt id"})
+		return
+	}
+	report, err := h.attemptSvc.GetAttemptDetail(claims.UserID, uint(id))
+	if err != nil {
+		h.respondServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, report)
+}
+
 func (h *HTTPHandler) saveDraft(c *gin.Context) {
 	claims, ok := middleware.GetClaims(c)
 	if !ok {
@@ -753,6 +773,10 @@ func (h *HTTPHandler) respondServiceError(c *gin.Context, err error) {
 	case errors.Is(err, service.ErrQuestionSetNotFound):
 		c.JSON(http.StatusNotFound, gin.H{"message": err.Error()})
 	case errors.Is(err, service.ErrQuestionSetForbidden):
+		c.JSON(http.StatusForbidden, gin.H{"message": err.Error()})
+	case errors.Is(err, service.ErrAttemptNotFound):
+		c.JSON(http.StatusNotFound, gin.H{"message": err.Error()})
+	case errors.Is(err, service.ErrAttemptForbidden):
 		c.JSON(http.StatusForbidden, gin.H{"message": err.Error()})
 	default:
 		h.log.Error("service error", "error", err.Error())

@@ -598,3 +598,109 @@ func (s *AttemptService) ClearDraft(userID uint, quizMode string) error {
 	}
 	return nil
 }
+
+func (s *AttemptService) GetAttemptDetail(userID uint, attemptID uint) (*dto.AttemptReport, error) {
+	var attempt models.Attempt
+	if err := s.db.Preload("Answers").Where("id = ?", attemptID).First(&attempt).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrAttemptNotFound
+		}
+		return nil, fmt.Errorf("load attempt: %w", err)
+	}
+
+	if attempt.UserID != userID {
+		return nil, ErrAttemptForbidden
+	}
+
+	answerIDs := make([]uint, 0, len(attempt.Answers))
+	questionIDSet := map[uint]struct{}{}
+	for _, a := range attempt.Answers {
+		answerIDs = append(answerIDs, a.ID)
+		questionIDSet[a.QuestionID] = struct{}{}
+	}
+
+	questionIDs := make([]uint, 0, len(questionIDSet))
+	for id := range questionIDSet {
+		questionIDs = append(questionIDs, id)
+	}
+
+	var questions []models.Question
+	if err := s.db.Preload("Options").Preload("BlankAnswers").Where("id IN ?", questionIDs).Find(&questions).Error; err != nil {
+		return nil, fmt.Errorf("load questions: %w", err)
+	}
+	questionMap := map[uint]models.Question{}
+	for _, q := range questions {
+		questionMap[q.ID] = q
+	}
+
+	answers := make([]dto.AttemptReportAnswer, 0, len(attempt.Answers))
+	correctCount := 0
+	wrongCount := 0
+
+	for _, ans := range attempt.Answers {
+		q, ok := questionMap[ans.QuestionID]
+		if !ok {
+			continue
+		}
+
+		reportAns := dto.AttemptReportAnswer{
+			QuestionID:    ans.QuestionID,
+			QuestionTitle: q.Title,
+			QuestionType:  ans.QuestionType,
+			Score:         ans.Score,
+			MaxScore:      ans.MaxScore,
+			IsCorrect:     ans.IsCorrect,
+		}
+
+		if ans.IsCorrect {
+			correctCount++
+		} else {
+			wrongCount++
+		}
+
+		switch ans.QuestionType {
+		case models.QuestionTypeSingle, models.QuestionTypeJudge, models.QuestionTypeMultiple:
+			opts := make([]dto.AttemptReportOption, 0, len(q.Options))
+			for _, opt := range q.Options {
+				opts = append(opts, dto.AttemptReportOption{
+					ID:        opt.ID,
+					Content:   opt.Content,
+					IsCorrect: opt.IsCorrect,
+				})
+			}
+			reportAns.Options = opts
+
+			if ans.QuestionType == models.QuestionTypeSingle || ans.QuestionType == models.QuestionTypeJudge {
+				reportAns.SelectedOptionID = ans.SelectedOptionID
+			} else {
+				reportAns.SelectedOptionIDs = []uint(ans.SelectedOptionIDs)
+			}
+		case models.QuestionTypeBlank:
+			reportAns.BlankAnswer = ans.BlankAnswer
+			correctAnswers := make([]string, 0, len(q.BlankAnswers))
+			for _, ba := range q.BlankAnswers {
+				correctAnswers = append(correctAnswers, ba.Answer)
+			}
+			reportAns.CorrectBlankAnswers = correctAnswers
+		}
+
+		answers = append(answers, reportAns)
+	}
+
+	rate := "0%"
+	if attempt.Total > 0 {
+		rate = fmt.Sprintf("%.0f%%", (float64(attempt.Score)/float64(attempt.Total))*100)
+	}
+
+	return &dto.AttemptReport{
+		ID:            attempt.ID,
+		Score:         attempt.Score,
+		Total:         attempt.Total,
+		Rate:          rate,
+		CorrectCount:  correctCount,
+		WrongCount:    wrongCount,
+		QuestionCount: len(answers),
+		CreatedAt:     attempt.CreatedAt.Format("2006-01-02 15:04:05"),
+		Answers:       answers,
+	}, nil
+}

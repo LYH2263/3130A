@@ -31,4 +31,6 @@ var (
 	ErrKnowledgePointExists    = errors.New("knowledge point already exists")
 	ErrExplanationUnauthorized = errors.New("unauthorized to view explanation")
 	ErrDraftNotFound           = errors.New("draft not found")
+	ErrAttemptNotFound         = errors.New("attempt not found")
+	ErrAttemptForbidden        = errors.New("forbidden to view this attempt")
 )
