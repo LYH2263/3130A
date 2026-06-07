@@ -17,20 +17,22 @@ import (
 )
 
 type HTTPHandler struct {
-	authSvc          *service.AuthService
-	categorySvc      *service.CategoryService
-	tagSvc           *service.TagService
-	questionSvc      *service.QuestionService
-	attemptSvc       *service.AttemptService
-	mistakeReviewSvc *service.MistakeReviewService
-	tokens           *auth.TokenManager
-	log              *slog.Logger
+	authSvc            *service.AuthService
+	categorySvc        *service.CategoryService
+	tagSvc             *service.TagService
+	knowledgePointSvc  *service.KnowledgePointService
+	questionSvc        *service.QuestionService
+	attemptSvc         *service.AttemptService
+	mistakeReviewSvc   *service.MistakeReviewService
+	tokens             *auth.TokenManager
+	log                *slog.Logger
 }
 
 func New(
 	authSvc *service.AuthService,
 	categorySvc *service.CategoryService,
 	tagSvc *service.TagService,
+	knowledgePointSvc *service.KnowledgePointService,
 	questionSvc *service.QuestionService,
 	attemptSvc *service.AttemptService,
 	mistakeReviewSvc *service.MistakeReviewService,
@@ -38,14 +40,15 @@ func New(
 	log *slog.Logger,
 ) *HTTPHandler {
 	return &HTTPHandler{
-		authSvc:          authSvc,
-		categorySvc:      categorySvc,
-		tagSvc:           tagSvc,
-		questionSvc:      questionSvc,
-		attemptSvc:       attemptSvc,
-		mistakeReviewSvc: mistakeReviewSvc,
-		tokens:           tokens,
-		log:              log,
+		authSvc:            authSvc,
+		categorySvc:        categorySvc,
+		tagSvc:             tagSvc,
+		knowledgePointSvc:  knowledgePointSvc,
+		questionSvc:        questionSvc,
+		attemptSvc:         attemptSvc,
+		mistakeReviewSvc:   mistakeReviewSvc,
+		tokens:             tokens,
+		log:                log,
 	}
 }
 
@@ -85,6 +88,11 @@ func (h *HTTPHandler) Router() *gin.Engine {
 				teacher.PUT("/tags/:id", h.updateTag)
 				teacher.DELETE("/tags/:id", h.deleteTag)
 
+				teacher.GET("/knowledge-points", h.listKnowledgePoints)
+				teacher.POST("/knowledge-points", h.createKnowledgePoint)
+				teacher.PUT("/knowledge-points/:id", h.updateKnowledgePoint)
+				teacher.DELETE("/knowledge-points/:id", h.deleteKnowledgePoint)
+
 				teacher.GET("/questions", h.listQuestions)
 				teacher.GET("/questions/:id", h.getQuestion)
 				teacher.POST("/questions", h.createQuestion)
@@ -104,6 +112,8 @@ func (h *HTTPHandler) Router() *gin.Engine {
 				student.POST("/draft", h.saveDraft)
 				student.GET("/draft", h.getDraft)
 				student.DELETE("/draft", h.clearDraft)
+				student.GET("/explanations", h.getExplanations)
+				student.GET("/questions/:id/explanation", h.getQuestionExplanation)
 			}
 		}
 	}
@@ -203,7 +213,7 @@ func (h *HTTPHandler) createQuestion(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"message": "invalid question payload"})
 		return
 	}
-	question, err := h.questionSvc.CreateQuestion(req, claims.UserID, h.tagSvc)
+	question, err := h.questionSvc.CreateQuestion(req, claims.UserID, h.tagSvc, h.knowledgePointSvc)
 	if err != nil {
 		h.respondServiceError(c, err)
 		return
@@ -222,7 +232,7 @@ func (h *HTTPHandler) updateQuestion(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"message": "invalid question payload"})
 		return
 	}
-	question, err := h.questionSvc.UpdateQuestion(uint(id), req, h.tagSvc)
+	question, err := h.questionSvc.UpdateQuestion(uint(id), req, h.tagSvc, h.knowledgePointSvc)
 	if err != nil {
 		h.respondServiceError(c, err)
 		return
@@ -267,7 +277,7 @@ func (h *HTTPHandler) uploadQuestions(c *gin.Context) {
 		return
 	}
 
-	count, err := h.questionSvc.UploadFromJSON(data, claims.UserID)
+	count, err := h.questionSvc.UploadFromJSON(data, claims.UserID, h.tagSvc, h.knowledgePointSvc)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"message": err.Error()})
 		return
@@ -580,6 +590,105 @@ func (h *HTTPHandler) deleteTag(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "tag deleted"})
 }
 
+func (h *HTTPHandler) listKnowledgePoints(c *gin.Context) {
+	kps, err := h.knowledgePointSvc.ListKnowledgePoints()
+	if err != nil {
+		h.log.Error("list knowledge points failed", "error", err.Error())
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "failed to load knowledge points"})
+		return
+	}
+	c.JSON(http.StatusOK, kps)
+}
+
+func (h *HTTPHandler) createKnowledgePoint(c *gin.Context) {
+	var req dto.KnowledgePointInput
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "invalid knowledge point payload"})
+		return
+	}
+	kp, err := h.knowledgePointSvc.CreateKnowledgePoint(req.Name, req.Sort)
+	if err != nil {
+		h.respondServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, kp)
+}
+
+func (h *HTTPHandler) updateKnowledgePoint(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "invalid knowledge point id"})
+		return
+	}
+	var req dto.KnowledgePointInput
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "invalid knowledge point payload"})
+		return
+	}
+	kp, err := h.knowledgePointSvc.UpdateKnowledgePoint(uint(id), req.Name, req.Sort)
+	if err != nil {
+		h.respondServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, kp)
+}
+
+func (h *HTTPHandler) deleteKnowledgePoint(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "invalid knowledge point id"})
+		return
+	}
+	if err := h.knowledgePointSvc.DeleteKnowledgePoint(uint(id)); err != nil {
+		h.respondServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "knowledge point deleted"})
+}
+
+func (h *HTTPHandler) getQuestionExplanation(c *gin.Context) {
+	claims, ok := middleware.GetClaims(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"message": "invalid token"})
+		return
+	}
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "invalid question id"})
+		return
+	}
+	explanation, err := h.questionSvc.GetExplanationForStudent(uint(id), claims.UserID)
+	if err != nil {
+		h.respondServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, explanation)
+}
+
+func (h *HTTPHandler) getExplanations(c *gin.Context) {
+	claims, ok := middleware.GetClaims(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"message": "invalid token"})
+		return
+	}
+
+	idsStr := c.QueryArray("questionIds")
+	questionIDs := make([]uint, 0, len(idsStr))
+	for _, s := range idsStr {
+		id, err := strconv.ParseUint(s, 10, 64)
+		if err == nil {
+			questionIDs = append(questionIDs, uint(id))
+		}
+	}
+
+	explanations, err := h.questionSvc.BatchGetExplanationsForStudent(questionIDs, claims.UserID)
+	if err != nil {
+		h.respondServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, explanations)
+}
+
 func (h *HTTPHandler) respondServiceError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, service.ErrUserExists):
@@ -589,12 +698,16 @@ func (h *HTTPHandler) respondServiceError(c *gin.Context, err error) {
 	case errors.Is(err, service.ErrClassNotFound),
 		errors.Is(err, service.ErrQuestionNotFound),
 		errors.Is(err, service.ErrCategoryNotFound),
-		errors.Is(err, service.ErrTagNotFound):
+		errors.Is(err, service.ErrTagNotFound),
+		errors.Is(err, service.ErrKnowledgePointNotFound):
 		c.JSON(http.StatusNotFound, gin.H{"message": err.Error()})
-	case errors.Is(err, service.ErrTagExists):
+	case errors.Is(err, service.ErrTagExists),
+		errors.Is(err, service.ErrKnowledgePointExists):
 		c.JSON(http.StatusConflict, gin.H{"message": err.Error()})
 	case errors.Is(err, service.ErrNoQuestions):
 		c.JSON(http.StatusNotFound, gin.H{"message": err.Error()})
+	case errors.Is(err, service.ErrExplanationUnauthorized):
+		c.JSON(http.StatusForbidden, gin.H{"message": err.Error()})
 	case errors.Is(err, service.ErrInvalidQuestion),
 		errors.Is(err, service.ErrInvalidSubmission),
 		errors.Is(err, service.ErrInvalidQuestionType),
@@ -609,7 +722,8 @@ func (h *HTTPHandler) respondServiceError(c *gin.Context, err error) {
 		errors.Is(err, service.ErrInvalidOptionContent),
 		errors.Is(err, service.ErrCategoryNameEmpty),
 		errors.Is(err, service.ErrCategoryParentInvalid),
-		errors.Is(err, service.ErrTagNameEmpty):
+		errors.Is(err, service.ErrTagNameEmpty),
+		errors.Is(err, service.ErrKnowledgePointNameEmpty):
 		c.JSON(http.StatusBadRequest, gin.H{"message": err.Error()})
 	default:
 		h.log.Error("service error", "error", err.Error())

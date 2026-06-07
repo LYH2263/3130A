@@ -57,7 +57,7 @@ func (s *MistakeReviewService) GetMistakeReviews(userID uint) ([]dto.MistakeRevi
 	}
 
 	var questions []models.Question
-	if err := s.db.Preload("Options").Preload("BlankAnswers").Where("id IN ?", questionIDs).Find(&questions).Error; err != nil {
+	if err := s.db.Preload("Options").Preload("BlankAnswers").Preload("Explanation").Preload("KnowledgePoints").Where("id IN ?", questionIDs).Find(&questions).Error; err != nil {
 		return nil, fmt.Errorf("load mistake questions: %w", err)
 	}
 
@@ -86,16 +86,26 @@ func (s *MistakeReviewService) GetMistakeReviews(userID uint) ([]dto.MistakeRevi
 			status = models.MistakeReviewStatusPending
 		}
 
+		expContent := ""
+		expRefs := ""
+		if q.Explanation != nil {
+			expContent = q.Explanation.Content
+			expRefs = q.Explanation.References
+		}
+
 		result = append(result, dto.MistakeReviewItem{
-			QuestionID:    q.ID,
-			Title:         q.Title,
-			WrongCount:    wrongCountMap[q.ID],
-			CorrectOption: correct,
-			Type:          q.Type,
-			Status:        status,
-			ReviewCount:   review.ReviewCount,
-			StreakCorrect: review.StreakCorrect,
-			MasteryRate:   masteryRate,
+			QuestionID:        q.ID,
+			Title:             q.Title,
+			WrongCount:        wrongCountMap[q.ID],
+			CorrectOption:     correct,
+			Type:              q.Type,
+			Status:            status,
+			ReviewCount:       review.ReviewCount,
+			StreakCorrect:     review.StreakCorrect,
+			MasteryRate:       masteryRate,
+			ExplanationContent: expContent,
+			ExplanationRefs:   expRefs,
+			KnowledgePoints:   toKnowledgePointInfos(q.KnowledgePoints),
 		})
 	}
 

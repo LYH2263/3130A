@@ -39,7 +39,7 @@ func NewQuestionService(db *gorm.DB, log *slog.Logger) *QuestionService {
 
 func (s *QuestionService) ListQuestions() ([]models.Question, error) {
 	var questions []models.Question
-	if err := s.db.Preload("Options").Preload("BlankAnswers").Preload("Tags").Preload("Category").Order("id desc").Find(&questions).Error; err != nil {
+	if err := s.db.Preload("Options").Preload("BlankAnswers").Preload("Tags").Preload("KnowledgePoints").Preload("Explanation").Preload("Category").Order("id desc").Find(&questions).Error; err != nil {
 		return nil, fmt.Errorf("list questions: %w", err)
 	}
 	return questions, nil
@@ -47,7 +47,7 @@ func (s *QuestionService) ListQuestions() ([]models.Question, error) {
 
 func (s *QuestionService) GetQuestion(id uint) (*models.Question, error) {
 	var question models.Question
-	if err := s.db.Preload("Options").Preload("BlankAnswers").Preload("Tags").Preload("Category").First(&question, id).Error; err != nil {
+	if err := s.db.Preload("Options").Preload("BlankAnswers").Preload("Tags").Preload("KnowledgePoints").Preload("Explanation").Preload("Category").First(&question, id).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return nil, ErrQuestionNotFound
 		}
@@ -105,7 +105,7 @@ func (s *QuestionService) QueryQuestions(query dto.QuestionQuery, categorySvc *C
 	offset := (page - 1) * pageSize
 
 	var questions []models.Question
-	if err := db.Preload("Category").Preload("Tags").
+	if err := db.Preload("Category").Preload("Tags").Preload("KnowledgePoints").Preload("Explanation").
 		Order("id desc").
 		Limit(pageSize).
 		Offset(offset).
@@ -119,17 +119,26 @@ func (s *QuestionService) QueryQuestions(query dto.QuestionQuery, categorySvc *C
 		if q.Category != nil {
 			categoryName = q.Category.Name
 		}
+		expContent := ""
+		expRefs := ""
+		if q.Explanation != nil {
+			expContent = q.Explanation.Content
+			expRefs = q.Explanation.References
+		}
 		items = append(items, dto.QuestionDetail{
-			ID:            q.ID,
-			Type:          q.Type,
-			Title:         q.Title,
-			Description:   q.Description,
-			CategoryID:    q.CategoryID,
-			CategoryName:  categoryName,
-			CreatedBy:     q.CreatedBy,
-			MultipleScore: q.MultipleScore,
-			CreatedAt:     q.CreatedAt.Format("2006-01-02 15:04:05"),
-			UpdatedAt:     q.UpdatedAt.Format("2006-01-02 15:04:05"),
+			ID:                 q.ID,
+			Type:               q.Type,
+			Title:              q.Title,
+			Description:        q.Description,
+			CategoryID:         q.CategoryID,
+			CategoryName:       categoryName,
+			CreatedBy:          q.CreatedBy,
+			MultipleScore:      q.MultipleScore,
+			ExplanationContent: expContent,
+			ExplanationRefs:    expRefs,
+			KnowledgePoints:    toKnowledgePointInfos(q.KnowledgePoints),
+			CreatedAt:          q.CreatedAt.Format("2006-01-02 15:04:05"),
+			UpdatedAt:          q.UpdatedAt.Format("2006-01-02 15:04:05"),
 		})
 	}
 
@@ -141,7 +150,7 @@ func (s *QuestionService) QueryQuestions(query dto.QuestionQuery, categorySvc *C
 	}, nil
 }
 
-func (s *QuestionService) CreateQuestion(input dto.QuestionInput, createdBy uint, tagSvc *TagService) (*models.Question, error) {
+func (s *QuestionService) CreateQuestion(input dto.QuestionInput, createdBy uint, tagSvc *TagService, kpSvc *KnowledgePointService) (*models.Question, error) {
 	if err := validateQuestionInput(input); err != nil {
 		return nil, err
 	}
@@ -164,6 +173,8 @@ func (s *QuestionService) CreateQuestion(input dto.QuestionInput, createdBy uint
 	} else {
 		question.Options = toOptionModels(input.Options)
 	}
+
+	hasExplanation := strings.TrimSpace(input.ExplanationContent) != "" || strings.TrimSpace(input.ExplanationRefs) != ""
 
 	if err := s.db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(&question).Error; err != nil {
@@ -190,12 +201,43 @@ func (s *QuestionService) CreateQuestion(input dto.QuestionInput, createdBy uint
 			}
 		}
 
+		if len(input.KnowledgePointNames) > 0 && kpSvc != nil {
+			var kps []models.KnowledgePoint
+			for _, name := range input.KnowledgePointNames {
+				name = strings.TrimSpace(name)
+				if name == "" {
+					continue
+				}
+				kp, err := kpSvc.GetOrCreateKnowledgePoint(name)
+				if err != nil {
+					return fmt.Errorf("get or create knowledge point: %w", err)
+				}
+				kps = append(kps, *kp)
+			}
+			if len(kps) > 0 {
+				if err := tx.Model(&question).Association("KnowledgePoints").Append(kps); err != nil {
+					return fmt.Errorf("associate knowledge points: %w", err)
+				}
+			}
+		}
+
+		if hasExplanation {
+			explanation := models.QuestionExplanation{
+				QuestionID: question.ID,
+				Content:    strings.TrimSpace(input.ExplanationContent),
+				References: strings.TrimSpace(input.ExplanationRefs),
+			}
+			if err := tx.Create(&explanation).Error; err != nil {
+				return fmt.Errorf("create explanation: %w", err)
+			}
+		}
+
 		return nil
 	}); err != nil {
 		return nil, err
 	}
 
-	if err := s.db.Preload("Options").Preload("BlankAnswers").Preload("Tags").Preload("Category").First(&question, question.ID).Error; err != nil {
+	if err := s.db.Preload("Options").Preload("BlankAnswers").Preload("Tags").Preload("KnowledgePoints").Preload("Explanation").Preload("Category").First(&question, question.ID).Error; err != nil {
 		return nil, fmt.Errorf("reload question: %w", err)
 	}
 
@@ -203,13 +245,13 @@ func (s *QuestionService) CreateQuestion(input dto.QuestionInput, createdBy uint
 	return &question, nil
 }
 
-func (s *QuestionService) UpdateQuestion(questionID uint, input dto.QuestionInput, tagSvc *TagService) (*models.Question, error) {
+func (s *QuestionService) UpdateQuestion(questionID uint, input dto.QuestionInput, tagSvc *TagService, kpSvc *KnowledgePointService) (*models.Question, error) {
 	if err := validateQuestionInput(input); err != nil {
 		return nil, err
 	}
 
 	var question models.Question
-	if err := s.db.Preload("Options").Preload("BlankAnswers").First(&question, questionID).Error; err != nil {
+	if err := s.db.Preload("Options").Preload("BlankAnswers").Preload("Explanation").First(&question, questionID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrQuestionNotFound
 		}
@@ -224,6 +266,8 @@ func (s *QuestionService) UpdateQuestion(questionID uint, input dto.QuestionInpu
 	if question.MultipleScore == "" {
 		question.MultipleScore = models.MultipleScoringAllOrNothing
 	}
+
+	hasExplanation := strings.TrimSpace(input.ExplanationContent) != "" || strings.TrimSpace(input.ExplanationRefs) != ""
 
 	if err := s.db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Model(&question).Updates(map[string]any{
@@ -286,12 +330,51 @@ func (s *QuestionService) UpdateQuestion(questionID uint, input dto.QuestionInpu
 			}
 		}
 
+		if kpSvc != nil {
+			if err := tx.Model(&question).Association("KnowledgePoints").Clear(); err != nil {
+				return fmt.Errorf("clear knowledge points: %w", err)
+			}
+			if len(input.KnowledgePointNames) > 0 {
+				var kps []models.KnowledgePoint
+				for _, name := range input.KnowledgePointNames {
+					name = strings.TrimSpace(name)
+					if name == "" {
+						continue
+					}
+					kp, err := kpSvc.GetOrCreateKnowledgePoint(name)
+					if err != nil {
+						return fmt.Errorf("get or create knowledge point: %w", err)
+					}
+					kps = append(kps, *kp)
+				}
+				if len(kps) > 0 {
+					if err := tx.Model(&question).Association("KnowledgePoints").Append(kps); err != nil {
+						return fmt.Errorf("associate knowledge points: %w", err)
+					}
+				}
+			}
+		}
+
+		if err := tx.Where("question_id = ?", question.ID).Delete(&models.QuestionExplanation{}).Error; err != nil {
+			return fmt.Errorf("delete old explanation: %w", err)
+		}
+		if hasExplanation {
+			explanation := models.QuestionExplanation{
+				QuestionID: question.ID,
+				Content:    strings.TrimSpace(input.ExplanationContent),
+				References: strings.TrimSpace(input.ExplanationRefs),
+			}
+			if err := tx.Create(&explanation).Error; err != nil {
+				return fmt.Errorf("create explanation: %w", err)
+			}
+		}
+
 		return nil
 	}); err != nil {
 		return nil, fmt.Errorf("update question: %w", err)
 	}
 
-	if err := s.db.Preload("Options").Preload("BlankAnswers").Preload("Tags").Preload("Category").First(&question, question.ID).Error; err != nil {
+	if err := s.db.Preload("Options").Preload("BlankAnswers").Preload("Tags").Preload("KnowledgePoints").Preload("Explanation").Preload("Category").First(&question, question.ID).Error; err != nil {
 		return nil, fmt.Errorf("reload question: %w", err)
 	}
 	return &question, nil
@@ -306,6 +389,12 @@ func (s *QuestionService) DeleteQuestion(questionID uint) error {
 			return err
 		}
 		if err := tx.Where("question_id = ?", questionID).Delete(&models.QuestionTag{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("question_id = ?", questionID).Delete(&models.QuestionKnowledgePoint{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("question_id = ?", questionID).Delete(&models.QuestionExplanation{}).Error; err != nil {
 			return err
 		}
 		res := tx.Delete(&models.Question{}, questionID)
@@ -323,7 +412,7 @@ func (s *QuestionService) DeleteQuestion(questionID uint) error {
 	return nil
 }
 
-func (s *QuestionService) UploadFromJSON(data []byte, createdBy uint) (int, error) {
+func (s *QuestionService) UploadFromJSON(data []byte, createdBy uint, tagSvc *TagService, kpSvc *KnowledgePointService) (int, error) {
 	var payload dto.UploadQuestionPayload
 	if err := json.Unmarshal(data, &payload); err != nil {
 		var arrayPayload []dto.QuestionInput
@@ -346,7 +435,7 @@ func (s *QuestionService) UploadFromJSON(data []byte, createdBy uint) (int, erro
 			s.log.Warn("upload question skipped", "error", err.Error())
 			continue
 		}
-		if _, err := s.CreateQuestion(item, createdBy); err != nil {
+		if _, err := s.CreateQuestion(item, createdBy, tagSvc, kpSvc); err != nil {
 			s.log.Warn("upload question failed", "error", err.Error())
 			continue
 		}
@@ -511,4 +600,90 @@ func toBlankAnswerModels(inputs []dto.BlankAnswerInput) []models.BlankAnswer {
 		})
 	}
 	return answers
+}
+
+func (s *QuestionService) GetExplanationForStudent(questionID uint, userID uint) (*dto.QuestionExplanationDTO, error) {
+	var answerCount int64
+	if err := s.db.Model(&models.AttemptAnswer{}).
+		Joins("JOIN attempts ON attempt_answers.attempt_id = attempts.id").
+		Where("attempt_answers.question_id = ? AND attempts.user_id = ?", questionID, userID).
+		Count(&answerCount).Error; err != nil {
+		return nil, fmt.Errorf("check answer existence: %w", err)
+	}
+	if answerCount == 0 {
+		return nil, ErrExplanationUnauthorized
+	}
+
+	var question models.Question
+	if err := s.db.Preload("Explanation").Preload("KnowledgePoints").
+		First(&question, questionID).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, ErrQuestionNotFound
+		}
+		return nil, fmt.Errorf("load question: %w", err)
+	}
+
+	result := &dto.QuestionExplanationDTO{
+		KnowledgePoints: toKnowledgePointInfos(question.KnowledgePoints),
+	}
+	if question.Explanation != nil {
+		result.Content = question.Explanation.Content
+		result.References = question.Explanation.References
+	}
+
+	return result, nil
+}
+
+func (s *QuestionService) BatchGetExplanationsForStudent(questionIDs []uint, userID uint) (map[uint]*dto.QuestionExplanationDTO, error) {
+	if len(questionIDs) == 0 {
+		return map[uint]*dto.QuestionExplanationDTO{}, nil
+	}
+
+	answeredQuestionIDs := make(map[uint]bool)
+	var answers []models.AttemptAnswer
+	if err := s.db.
+		Joins("JOIN attempts ON attempt_answers.attempt_id = attempts.id").
+		Where("attempt_answers.question_id IN ? AND attempts.user_id = ?", questionIDs, userID).
+		Find(&answers).Error; err != nil {
+		return nil, fmt.Errorf("check answer existence: %w", err)
+	}
+	for _, a := range answers {
+		answeredQuestionIDs[a.QuestionID] = true
+	}
+
+	result := make(map[uint]*dto.QuestionExplanationDTO)
+	for _, id := range questionIDs {
+		if !answeredQuestionIDs[id] {
+			continue
+		}
+		result[id] = nil
+	}
+
+	if len(result) == 0 {
+		return result, nil
+	}
+
+	ids := make([]uint, 0, len(result))
+	for id := range result {
+		ids = append(ids, id)
+	}
+
+	var questions []models.Question
+	if err := s.db.Preload("Explanation").Preload("KnowledgePoints").
+		Where("id IN ?", ids).Find(&questions).Error; err != nil {
+		return nil, fmt.Errorf("load questions: %w", err)
+	}
+
+	for _, q := range questions {
+		dto := &dto.QuestionExplanationDTO{
+			KnowledgePoints: toKnowledgePointInfos(q.KnowledgePoints),
+		}
+		if q.Explanation != nil {
+			dto.Content = q.Explanation.Content
+			dto.References = q.Explanation.References
+		}
+		result[q.ID] = dto
+	}
+
+	return result, nil
 }

@@ -62,6 +62,33 @@ export async function deleteTag(token, id) {
   return apiRequest(`/teacher/tags/${id}`, { method: 'DELETE', token });
 }
 
+export async function fetchKnowledgePoints(token) {
+  return apiRequest('/teacher/knowledge-points', { token });
+}
+
+export async function createKnowledgePoint(token, data) {
+  return apiRequest('/teacher/knowledge-points', { method: 'POST', token, body: data });
+}
+
+export async function updateKnowledgePoint(token, id, data) {
+  return apiRequest(`/teacher/knowledge-points/${id}`, { method: 'PUT', token, body: data });
+}
+
+export async function deleteKnowledgePoint(token, id) {
+  return apiRequest(`/teacher/knowledge-points/${id}`, { method: 'DELETE', token });
+}
+
+export async function fetchQuestionExplanation(token, questionId) {
+  return apiRequest(`/student/questions/${questionId}/explanation`, { token });
+}
+
+export async function fetchExplanations(token, questionIds = []) {
+  const query = new URLSearchParams();
+  questionIds.forEach((id) => query.append('questionIds', id));
+  const queryString = query.toString();
+  return apiRequest(`/student/explanations${queryString ? '?' + queryString : ''}`, { token });
+}
+
 export async function fetchQuestions(token, params = {}) {
   const query = new URLSearchParams();
   if (params.keyword) query.append('keyword', params.keyword);

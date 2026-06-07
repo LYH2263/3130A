@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'react-hot-toast';
 
-import { apiRequest, fetchMistakeReviewQuiz, submitMistakeReview, saveDraft, getDraft, clearDraft } from '../api/client';
+import { apiRequest, fetchMistakeReviewQuiz, submitMistakeReview, saveDraft, getDraft, clearDraft, fetchExplanations } from '../api/client';
 import { StatCard } from '../components/StatCard';
 import { QUESTION_TYPE_LABELS } from '../utils/validators';
 
@@ -108,7 +108,63 @@ function QuestionItem({ question, index, answer, onAnswer }) {
   );
 }
 
-function ResultDetail({ questions, details }) {
+function ExplanationPanel({ explanation, knowledgePoints, compact = false }) {
+  const hasContent = explanation?.content || (knowledgePoints && knowledgePoints.length > 0);
+  const refs = explanation?.references
+    ? explanation.references.split('\n').filter((r) => r.trim())
+    : [];
+
+  if (!hasContent) {
+    return null;
+  }
+
+  return (
+    <div className={`rounded-lg bg-slate-50 border border-slate-200 ${compact ? 'p-3' : 'p-4'}`}>
+      {knowledgePoints && knowledgePoints.length > 0 && (
+        <div className="mb-2">
+          <span className="text-xs font-medium text-slate-500">知识点：</span>
+          <div className="mt-1 flex flex-wrap gap-1.5">
+            {knowledgePoints.map((kp) => (
+              <span key={kp.id || kp.name} className="badge badge-secondary badge-xs">
+                {kp.name}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+      {explanation?.content && (
+        <div className="mt-2">
+          <span className="text-xs font-medium text-slate-500">解析：</span>
+          <div
+            className="mt-1 text-sm text-slate-700 leading-relaxed"
+            dangerouslySetInnerHTML={{ __html: explanation.content }}
+          />
+        </div>
+      )}
+      {refs.length > 0 && (
+        <div className="mt-3">
+          <span className="text-xs font-medium text-slate-500">参考链接：</span>
+          <div className="mt-1 space-y-1">
+            {refs.map((ref, idx) => (
+              <a
+                key={idx}
+                href={ref}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="block text-xs text-sky-600 hover:text-sky-700 hover:underline truncate"
+              >
+                {ref}
+              </a>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ResultDetail({ questions, details, explanations, knowledgePointsMap }) {
+  const [expandedIds, setExpandedIds] = useState([]);
   const detailMap = useMemo(() => {
     const map = {};
     details.forEach((d) => {
@@ -117,6 +173,14 @@ function ResultDetail({ questions, details }) {
     return map;
   }, [details]);
 
+  const toggleExpand = (questionId) => {
+    setExpandedIds((prev) =>
+      prev.includes(questionId)
+        ? prev.filter((id) => id !== questionId)
+        : [...prev, questionId]
+    );
+  };
+
   return (
     <div className="space-y-3">
       <h3 className="text-sm font-semibold text-slate-700">答题详情</h3>
@@ -124,6 +188,9 @@ function ResultDetail({ questions, details }) {
         const detail = detailMap[q.id];
         if (!detail) return null;
         const typeLabel = QUESTION_TYPE_LABELS[detail.type] || '单选题';
+        const isExpanded = expandedIds.includes(q.id);
+        const explanation = explanations?.find((e) => e.questionId === q.id);
+        const kps = knowledgePointsMap?.[q.id] || [];
 
         return (
           <div
@@ -152,6 +219,24 @@ function ResultDetail({ questions, details }) {
             <div className="mt-1">
               <span className="text-xs text-slate-400">{typeLabel}</span>
             </div>
+
+            <button
+              type="button"
+              className="mt-2 text-xs text-sky-600 hover:text-sky-700 font-medium"
+              onClick={() => toggleExpand(q.id)}
+            >
+              {isExpanded ? '收起解析 ▲' : '查看解析与知识点 ▼'}
+            </button>
+
+            {isExpanded && (
+              <div className="mt-2">
+                <ExplanationPanel
+                  explanation={explanation}
+                  knowledgePoints={kps}
+                  compact
+                />
+              </div>
+            )}
           </div>
         );
       })}
@@ -269,13 +354,21 @@ function isAnswerProvided(question, answer) {
 
 function MistakeItem({ item, onReview }) {
   const isMastered = item.status === 'mastered';
+  const hasExplanation = item.explanationContent || item.explanationRefs || (item.knowledgePoints && item.knowledgePoints.length > 0);
+
+  const explanation = hasExplanation
+    ? {
+        content: item.explanationContent,
+        references: item.explanationRefs,
+      }
+    : null;
 
   return (
     <div className={`rounded-xl border p-3 ${isMastered ? 'bg-emerald-50/50 border-emerald-200' : 'bg-white border-slate-200'}`}>
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
           <p
-            className="truncate text-sm font-medium text-slate-700"
+            className="text-sm font-medium text-slate-700"
             title={`${item.title}\n正确答案：${item.correctOption}`}
           >
             {item.title}
@@ -319,6 +412,16 @@ function MistakeItem({ item, onReview }) {
           />
         </div>
       </div>
+      {hasExplanation && (
+        <div className="mt-3 pt-3 border-t border-slate-200">
+          <p className="text-xs font-medium text-slate-500 mb-2">解析</p>
+          <ExplanationPanel
+            explanation={explanation}
+            knowledgePoints={item.knowledgePoints}
+            compact
+          />
+        </div>
+      )}
     </div>
   );
 }
@@ -332,6 +435,8 @@ export function StudentDashboard({ user, token, onLogout }) {
   const [submitting, setSubmitting] = useState(false);
   const [loadingQuiz, setLoadingQuiz] = useState(false);
   const [lastResult, setLastResult] = useState(null);
+  const [normalQuizExplanations, setNormalQuizExplanations] = useState([]);
+  const [normalQuizKPMap, setNormalQuizKPMap] = useState({});
   const [quizMode, setQuizMode] = useState('normal');
   const [mistakeReviewResult, setMistakeReviewResult] = useState(null);
   const [saveDraftStatus, setSaveDraftStatus] = useState('idle');
@@ -432,6 +537,8 @@ export function StudentDashboard({ user, token, onLogout }) {
       setQuestions(quiz);
       setAnswers({});
       setLastResult(null);
+      setNormalQuizExplanations([]);
+      setNormalQuizKPMap({});
       setMistakeReviewResult(null);
       setQuizMode(mode);
     } catch (error) {
@@ -631,6 +738,23 @@ export function StudentDashboard({ user, token, onLogout }) {
         });
         setLastResult(result);
         toast.success(`提交成功：${result.score}/${result.total}`);
+
+        try {
+          const questionIds = questions.map((q) => q.id);
+          const explanations = await fetchExplanations(token, questionIds);
+          setNormalQuizExplanations(explanations || []);
+
+          const kpMap = {};
+          (explanations || []).forEach((e) => {
+            if (e.questionId && e.knowledgePoints) {
+              kpMap[e.questionId] = e.knowledgePoints;
+            }
+          });
+          setNormalQuizKPMap(kpMap);
+        } catch (exErr) {
+          console.warn('获取解析失败:', exErr);
+        }
+
         await loadStudentData();
       }
     } catch (error) {
@@ -759,7 +883,12 @@ export function StudentDashboard({ user, token, onLogout }) {
                     本次成绩：{lastResult.score}/{lastResult.total}（正确率 {lastResult.rate}）
                   </div>
                   {lastResult.details && lastResult.details.length > 0 && (
-                    <ResultDetail questions={questions} details={lastResult.details} />
+                    <ResultDetail
+                      questions={questions}
+                      details={lastResult.details}
+                      explanations={normalQuizExplanations}
+                      knowledgePointsMap={normalQuizKPMap}
+                    />
                   )}
                 </div>
               ) : null}

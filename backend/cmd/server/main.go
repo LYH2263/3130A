@@ -36,11 +36,12 @@ func main() {
 	authSvc := service.NewAuthService(db, tokens, log)
 	categorySvc := service.NewCategoryService(db, log)
 	tagSvc := service.NewTagService(db, log)
+	knowledgePointSvc := service.NewKnowledgePointService(db, log)
 	questionSvc := service.NewQuestionService(db, log)
 	attemptSvc := service.NewAttemptService(db, log)
 	mistakeReviewSvc := service.NewMistakeReviewService(db, log)
 
-	h := handler.New(authSvc, categorySvc, tagSvc, questionSvc, attemptSvc, mistakeReviewSvc, tokens, log)
+	h := handler.New(authSvc, categorySvc, tagSvc, knowledgePointSvc, questionSvc, attemptSvc, mistakeReviewSvc, tokens, log)
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,
 		Handler:           h.Router(),

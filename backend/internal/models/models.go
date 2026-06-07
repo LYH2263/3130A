@@ -88,20 +88,44 @@ type QuestionTag struct {
 	TagID      uint `gorm:"primaryKey;index" json:"tagId"`
 }
 
+type KnowledgePoint struct {
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	Name      string    `gorm:"size:128;uniqueIndex;not null" json:"name"`
+	Sort      int       `gorm:"not null;default:0" json:"sort"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+type QuestionKnowledgePoint struct {
+	QuestionID      uint `gorm:"primaryKey;index" json:"questionId"`
+	KnowledgePointID uint `gorm:"primaryKey;index" json:"knowledgePointId"`
+}
+
+type QuestionExplanation struct {
+	ID         uint      `gorm:"primaryKey" json:"id"`
+	QuestionID uint      `gorm:"uniqueIndex;not null" json:"questionId"`
+	Content    string    `gorm:"type:text" json:"content"`
+	References string    `gorm:"type:text" json:"references"`
+	CreatedAt  time.Time `json:"createdAt"`
+	UpdatedAt  time.Time `json:"updatedAt"`
+}
+
 type Question struct {
-	ID            uint             `gorm:"primaryKey" json:"id"`
-	Type          string           `gorm:"size:16;not null;default:'single';index" json:"type"`
-	Title         string           `gorm:"type:text;not null" json:"title"`
-	Description   string           `gorm:"type:text" json:"description"`
-	CategoryID    *uint            `gorm:"index" json:"categoryId"`
-	Category      *Category        `gorm:"foreignKey:CategoryID" json:"category,omitempty"`
-	Tags          []Tag            `gorm:"many2many:question_tags;" json:"tags,omitempty"`
-	CreatedBy     uint             `gorm:"index" json:"createdBy"`
-	Options       []QuestionOption `json:"options,omitempty"`
-	BlankAnswers  []BlankAnswer    `json:"blankAnswers,omitempty"`
-	MultipleScore string           `gorm:"size:20;not null;default:'all_or_nothing'" json:"multipleScore"`
-	CreatedAt     time.Time        `json:"createdAt"`
-	UpdatedAt     time.Time        `json:"updatedAt"`
+	ID                uint             `gorm:"primaryKey" json:"id"`
+	Type              string           `gorm:"size:16;not null;default:'single';index" json:"type"`
+	Title             string           `gorm:"type:text;not null" json:"title"`
+	Description       string           `gorm:"type:text" json:"description"`
+	CategoryID        *uint            `gorm:"index" json:"categoryId"`
+	Category          *Category        `gorm:"foreignKey:CategoryID" json:"category,omitempty"`
+	Tags              []Tag            `gorm:"many2many:question_tags;" json:"tags,omitempty"`
+	KnowledgePoints   []KnowledgePoint `gorm:"many2many:question_knowledge_points;" json:"knowledgePoints,omitempty"`
+	Explanation       *QuestionExplanation `gorm:"foreignKey:QuestionID" json:"explanation,omitempty"`
+	CreatedBy         uint             `gorm:"index" json:"createdBy"`
+	Options           []QuestionOption `json:"options,omitempty"`
+	BlankAnswers      []BlankAnswer    `json:"blankAnswers,omitempty"`
+	MultipleScore     string           `gorm:"size:20;not null;default:'all_or_nothing'" json:"multipleScore"`
+	CreatedAt         time.Time        `json:"createdAt"`
+	UpdatedAt         time.Time        `json:"updatedAt"`
 }
 
 type QuestionOption struct {

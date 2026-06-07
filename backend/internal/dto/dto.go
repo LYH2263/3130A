@@ -22,14 +22,17 @@ type BlankAnswerInput struct {
 }
 
 type QuestionInput struct {
-	Type          string                `json:"type" binding:"required,oneof=single multiple judge blank"`
-	Title         string                `json:"title" binding:"required,min=2,max=1000"`
-	Description   string                `json:"description" binding:"max=2000"`
-	CategoryID    *uint                 `json:"categoryId"`
-	TagNames      []string              `json:"tagNames"`
-	Options       []QuestionOptionInput `json:"options" binding:"dive"`
-	BlankAnswers  []BlankAnswerInput    `json:"blankAnswers" binding:"dive"`
-	MultipleScore string                `json:"multipleScore" binding:"omitempty,oneof=all_or_nothing partial"`
+	Type                 string                `json:"type" binding:"required,oneof=single multiple judge blank"`
+	Title                string                `json:"title" binding:"required,min=2,max=1000"`
+	Description          string                `json:"description" binding:"max=2000"`
+	CategoryID           *uint                 `json:"categoryId"`
+	TagNames             []string              `json:"tagNames"`
+	KnowledgePointNames  []string              `json:"knowledgePointNames"`
+	ExplanationContent   string                `json:"explanationContent" binding:"max=5000"`
+	ExplanationRefs      string                `json:"explanationRefs" binding:"max=2000"`
+	Options              []QuestionOptionInput `json:"options" binding:"dive"`
+	BlankAnswers         []BlankAnswerInput    `json:"blankAnswers" binding:"dive"`
+	MultipleScore        string                `json:"multipleScore" binding:"omitempty,oneof=all_or_nothing partial"`
 }
 
 type QuestionQuery struct {
@@ -49,16 +52,35 @@ type PaginatedQuestions struct {
 }
 
 type QuestionDetail struct {
-	ID            uint   `json:"id"`
-	Type          string `json:"type"`
-	Title         string `json:"title"`
-	Description   string `json:"description"`
-	CategoryID    *uint  `json:"categoryId"`
-	CategoryName  string `json:"categoryName"`
-	CreatedBy     uint   `json:"createdBy"`
-	MultipleScore string `json:"multipleScore"`
-	CreatedAt     string `json:"createdAt"`
-	UpdatedAt     string `json:"updatedAt"`
+	ID                   uint     `json:"id"`
+	Type                 string   `json:"type"`
+	Title                string   `json:"title"`
+	Description          string   `json:"description"`
+	CategoryID           *uint    `json:"categoryId"`
+	CategoryName         string   `json:"categoryName"`
+	CreatedBy            uint     `json:"createdBy"`
+	MultipleScore        string   `json:"multipleScore"`
+	ExplanationContent   string   `json:"explanationContent"`
+	ExplanationRefs      string   `json:"explanationRefs"`
+	KnowledgePoints      []KnowledgePointInfo `json:"knowledgePoints"`
+	CreatedAt            string   `json:"createdAt"`
+	UpdatedAt            string   `json:"updatedAt"`
+}
+
+type KnowledgePointInfo struct {
+	ID   uint   `json:"id"`
+	Name string `json:"name"`
+}
+
+type KnowledgePointInput struct {
+	Name string `json:"name" binding:"required,max=128"`
+	Sort int    `json:"sort"`
+}
+
+type QuestionExplanationDTO struct {
+	Content         string               `json:"content"`
+	References    string               `json:"references"`
+	KnowledgePoints []KnowledgePointInfo `json:"knowledgePoints"`
 }
 
 type CategoryInput struct {
@@ -103,15 +125,18 @@ type SubmitResultDetail struct {
 }
 
 type MistakeReviewItem struct {
-	QuestionID    uint   `json:"questionId"`
-	Title         string `json:"title"`
-	WrongCount    int64  `json:"wrongCount"`
-	CorrectOption string `json:"correctOption"`
-	Type          string `json:"type"`
-	Status        string `json:"status"`
-	ReviewCount   int    `json:"reviewCount"`
-	StreakCorrect int    `json:"streakCorrect"`
-	MasteryRate   int    `json:"masteryRate"`
+	QuestionID       uint               `json:"questionId"`
+	Title            string             `json:"title"`
+	WrongCount       int64              `json:"wrongCount"`
+	CorrectOption    string             `json:"correctOption"`
+	Type             string             `json:"type"`
+	Status           string             `json:"status"`
+	ReviewCount      int                `json:"reviewCount"`
+	StreakCorrect    int                `json:"streakCorrect"`
+	MasteryRate      int                `json:"masteryRate"`
+	ExplanationContent  string          `json:"explanationContent"`
+	ExplanationRefs    string          `json:"explanationRefs"`
+	KnowledgePoints  []KnowledgePointInfo `json:"knowledgePoints"`
 }
 
 type MistakeReviewSubmitRequest struct {

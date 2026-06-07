@@ -5,6 +5,7 @@ import {
   apiRequest,
   fetchCategories,
   fetchTags,
+  fetchKnowledgePoints,
   fetchQuestions,
   fetchQuestion,
 } from '../api/client';
@@ -92,6 +93,7 @@ export function TeacherDashboard({ user, token, onLogout }) {
 
   const [categories, setCategories] = useState([]);
   const [tags, setTags] = useState([]);
+  const [knowledgePoints, setKnowledgePoints] = useState([]);
   const [expandedCategoryIds, setExpandedCategoryIds] = useState([]);
   const [selectedCategoryId, setSelectedCategoryId] = useState(null);
   const [selectedTagIds, setSelectedTagIds] = useState([]);
@@ -105,18 +107,20 @@ export function TeacherDashboard({ user, token, onLogout }) {
   const loadDashboard = async () => {
     setLoading(true);
     try {
-      const [overviewData, statData, attemptData, categoryData, tagData] = await Promise.all([
+      const [overviewData, statData, attemptData, categoryData, tagData, kpData] = await Promise.all([
         apiRequest('/teacher/overview', { token }),
         apiRequest('/teacher/class-stats', { token }),
         apiRequest('/teacher/attempts?limit=50', { token }),
         fetchCategories(token),
         fetchTags(token),
+        fetchKnowledgePoints(token),
       ]);
       setOverview(overviewData);
       setStats(statData);
       setAttempts(attemptData);
       setCategories(categoryData);
       setTags(tagData);
+      setKnowledgePoints(kpData);
       if (categoryData && categoryData.length > 0) {
         setExpandedCategoryIds(categoryData.map((c) => c.id));
       }
@@ -609,6 +613,7 @@ export function TeacherDashboard({ user, token, onLogout }) {
         initialData={editingQuestion}
         categories={flattenCategories(categories)}
         tags={tags}
+        knowledgePoints={knowledgePoints}
         token={token}
         onClose={() => {
           setModalOpen(false);

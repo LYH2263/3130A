@@ -17,6 +17,9 @@ function getDefaultState(type) {
         description: '',
         categoryId: null,
         tagNames: [],
+        knowledgePointNames: [],
+        explanationContent: '',
+        explanationRefs: '',
         options: [
           { content: '', isCorrect: true },
           { content: '', isCorrect: false },
@@ -31,6 +34,9 @@ function getDefaultState(type) {
         description: '',
         categoryId: null,
         tagNames: [],
+        knowledgePointNames: [],
+        explanationContent: '',
+        explanationRefs: '',
         options: [
           { content: '', isCorrect: true },
           { content: '', isCorrect: true },
@@ -46,6 +52,9 @@ function getDefaultState(type) {
         description: '',
         categoryId: null,
         tagNames: [],
+        knowledgePointNames: [],
+        explanationContent: '',
+        explanationRefs: '',
         options: [
           { content: '正确', isCorrect: true },
           { content: '错误', isCorrect: false },
@@ -60,6 +69,9 @@ function getDefaultState(type) {
         description: '',
         categoryId: null,
         tagNames: [],
+        knowledgePointNames: [],
+        explanationContent: '',
+        explanationRefs: '',
         options: [],
         blankAnswers: [{ answer: '', matchMode: BLANK_MATCH_MODES.EXACT }],
         multipleScore: MULTIPLE_SCORING_MODES.ALL_OR_NOTHING,
@@ -71,6 +83,9 @@ function getDefaultState(type) {
         description: '',
         categoryId: null,
         tagNames: [],
+        knowledgePointNames: [],
+        explanationContent: '',
+        explanationRefs: '',
         options: [
           { content: '', isCorrect: true },
           { content: '', isCorrect: false },
@@ -93,6 +108,11 @@ function buildInitialState(data) {
     description: data.description || '',
     categoryId: data.categoryId || null,
     tagNames: data.tags ? data.tags.map((t) => t.name) : [],
+    knowledgePointNames: data.knowledgePoints
+      ? data.knowledgePoints.map((kp) => kp.name)
+      : [],
+    explanationContent: data.explanationContent || '',
+    explanationRefs: data.explanationRefs || '',
     options:
       data.options?.map((item) => ({
         id: item.id,
@@ -267,11 +287,108 @@ function TagInput({ tags, availableTags, onTagsChange }) {
   );
 }
 
+function KnowledgePointInput({ knowledgePoints, availableKPs, onChange }) {
+  const [inputValue, setInputValue] = useState('');
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const inputRef = useRef(null);
+  const containerRef = useRef(null);
+
+  useEffect(() => {
+    function handleClickOutside(e) {
+      if (containerRef.current && !containerRef.current.contains(e.target)) {
+        setShowSuggestions(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const suggestions = availableKPs
+    .filter(
+      (kp) =>
+        !knowledgePoints.includes(kp.name) &&
+        kp.name.toLowerCase().includes(inputValue.toLowerCase())
+    )
+    .slice(0, 10);
+
+  const addKP = (name) => {
+    name = name.trim();
+    if (name && !knowledgePoints.includes(name)) {
+      onChange([...knowledgePoints, name]);
+    }
+    setInputValue('');
+    setShowSuggestions(false);
+  };
+
+  const removeKP = (name) => {
+    onChange(knowledgePoints.filter((kp) => kp !== name));
+  };
+
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (inputValue.trim()) {
+        addKP(inputValue);
+      }
+    } else if (e.key === 'Backspace' && !inputValue && knowledgePoints.length > 0) {
+      removeKP(knowledgePoints[knowledgePoints.length - 1]);
+    }
+  };
+
+  return (
+    <div className="form-control" ref={containerRef}>
+      <span className="label-text mb-1 text-sm font-medium">知识点（可新建，回车添加）</span>
+      <div className="flex flex-wrap gap-1.5 rounded-lg border border-slate-300 bg-white p-2 min-h-[42px]">
+        {knowledgePoints.map((kp) => (
+          <span key={kp} className="badge badge-secondary badge-sm gap-1">
+            {kp}
+            <button
+              type="button"
+              className="ml-1 text-white/80 hover:text-white"
+              onClick={() => removeKP(kp)}
+            >
+              ×
+            </button>
+          </span>
+        ))}
+        <input
+          ref={inputRef}
+          type="text"
+          className="flex-1 min-w-[100px] border-none outline-none bg-transparent text-sm"
+          placeholder={knowledgePoints.length === 0 ? '输入知识点，回车添加...' : ''}
+          value={inputValue}
+          onChange={(e) => {
+            setInputValue(e.target.value);
+            setShowSuggestions(true);
+          }}
+          onFocus={() => setShowSuggestions(true)}
+          onKeyDown={handleKeyDown}
+        />
+      </div>
+      {showSuggestions && suggestions.length > 0 && (
+        <div className="mt-1 max-h-48 overflow-auto rounded-lg border border-slate-200 bg-white shadow-lg">
+          {suggestions.map((kp) => (
+            <button
+              key={kp.id}
+              type="button"
+              className="w-full px-3 py-1.5 text-left text-sm hover:bg-slate-100 text-slate-700"
+              onClick={() => addKP(kp.name)}
+            >
+              {kp.name}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function QuestionEditorModal({
   open,
   initialData,
   categories = [],
   tags = [],
+  knowledgePoints = [],
   onClose,
   onSubmit,
   loading,
@@ -298,6 +415,9 @@ export function QuestionEditorModal({
       description: prev.description,
       categoryId: prev.categoryId,
       tagNames: prev.tagNames,
+      knowledgePointNames: prev.knowledgePointNames,
+      explanationContent: prev.explanationContent,
+      explanationRefs: prev.explanationRefs,
     }));
   };
 
@@ -370,6 +490,9 @@ export function QuestionEditorModal({
       description: form.description,
       categoryId: form.categoryId,
       tagNames: form.tagNames,
+      knowledgePointNames: form.knowledgePointNames,
+      explanationContent: form.explanationContent,
+      explanationRefs: form.explanationRefs,
       options: form.options.map((item) => ({
         content: item.content,
         isCorrect: item.isCorrect,
@@ -460,6 +583,38 @@ export function QuestionEditorModal({
             availableTags={tags}
             onTagsChange={(val) => setForm((prev) => ({ ...prev, tagNames: val }))}
           />
+
+          <KnowledgePointInput
+            knowledgePoints={form.knowledgePointNames}
+            availableKPs={knowledgePoints}
+            onChange={(val) =>
+              setForm((prev) => ({ ...prev, knowledgePointNames: val }))
+            }
+          />
+
+          <label className="form-control">
+            <span className="label-text mb-1 text-sm font-medium">答案解析</span>
+            <textarea
+              className="textarea textarea-bordered min-h-32"
+              placeholder="输入答案解析内容（支持简单的 HTML 格式）"
+              value={form.explanationContent}
+              onChange={(event) =>
+                setForm((prev) => ({ ...prev, explanationContent: event.target.value }))
+              }
+            />
+          </label>
+
+          <label className="form-control">
+            <span className="label-text mb-1 text-sm font-medium">参考链接（可选，多个链接用换行分隔）</span>
+            <textarea
+              className="textarea textarea-bordered min-h-20"
+              placeholder="https://example.com/reference1\nhttps://example.com/reference2"
+              value={form.explanationRefs}
+              onChange={(event) =>
+                setForm((prev) => ({ ...prev, explanationRefs: event.target.value }))
+              }
+            />
+          </label>
 
           {form.type === QUESTION_TYPES.MULTIPLE && (
             <label className="form-control">
