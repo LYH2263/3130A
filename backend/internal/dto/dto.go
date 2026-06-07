@@ -176,3 +176,47 @@ type DraftResponse struct {
 	Answers   map[string]interface{}   `json:"answers"`
 	UpdatedAt string                   `json:"updatedAt"`
 }
+
+type FavoriteItem struct {
+	ID          uint   `json:"id"`
+	QuestionID  uint   `json:"questionId"`
+	Title       string `json:"title"`
+	Type        string `json:"type"`
+	CreatedAt   string `json:"createdAt"`
+}
+
+type QuestionSetDTO struct {
+	ID            uint   `json:"id"`
+	Name          string `json:"name"`
+	Description   string `json:"description"`
+	QuestionIDs   []uint `json:"questionIds"`
+	QuestionCount int    `json:"questionCount"`
+	SortOrder     int    `json:"sortOrder"`
+	CreatedAt     string `json:"createdAt"`
+	UpdatedAt     string `json:"updatedAt"`
+}
+
+type CreateQuestionSetRequest struct {
+	Name        string `json:"name" binding:"required,min=1,max=128"`
+	Description string `json:"description" binding:"max=500"`
+	QuestionIDs []uint `json:"questionIds"`
+}
+
+type UpdateQuestionSetRequest struct {
+	Name        string `json:"name" binding:"omitempty,min=1,max=128"`
+	Description string `json:"description" binding:"omitempty,max=500"`
+	QuestionIDs []uint `json:"questionIds"`
+	SortOrder   *int   `json:"sortOrder"`
+}
+
+type AddQuestionsToSetRequest struct {
+	QuestionIDs []uint `json:"questionIds" binding:"required,min=1"`
+}
+
+type ReorderSetQuestionsRequest struct {
+	QuestionIDs []uint `json:"questionIds" binding:"required"`
+}
+
+type BatchFavoriteStatusRequest struct {
+	QuestionIDs []uint `json:"questionIds"`
+}

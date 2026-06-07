@@ -4,8 +4,10 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"math/rand"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -24,6 +26,8 @@ type HTTPHandler struct {
 	questionSvc        *service.QuestionService
 	attemptSvc         *service.AttemptService
 	mistakeReviewSvc   *service.MistakeReviewService
+	favoriteSvc        *service.FavoriteService
+	questionSetSvc     *service.QuestionSetService
 	tokens             *auth.TokenManager
 	log                *slog.Logger
 }
@@ -36,6 +40,8 @@ func New(
 	questionSvc *service.QuestionService,
 	attemptSvc *service.AttemptService,
 	mistakeReviewSvc *service.MistakeReviewService,
+	favoriteSvc *service.FavoriteService,
+	questionSetSvc *service.QuestionSetService,
 	tokens *auth.TokenManager,
 	log *slog.Logger,
 ) *HTTPHandler {
@@ -47,6 +53,8 @@ func New(
 		questionSvc:        questionSvc,
 		attemptSvc:         attemptSvc,
 		mistakeReviewSvc:   mistakeReviewSvc,
+		favoriteSvc:        favoriteSvc,
+		questionSetSvc:     questionSetSvc,
 		tokens:             tokens,
 		log:                log,
 	}
@@ -114,6 +122,22 @@ func (h *HTTPHandler) Router() *gin.Engine {
 				student.DELETE("/draft", h.clearDraft)
 				student.GET("/explanations", h.getExplanations)
 				student.GET("/questions/:id/explanation", h.getQuestionExplanation)
+
+				student.POST("/favorites/:questionId", h.toggleFavorite)
+				student.DELETE("/favorites/:questionId", h.toggleFavorite)
+				student.GET("/favorites", h.listFavorites)
+				student.GET("/favorites/status", h.getFavoriteStatus)
+				student.GET("/favorites/quiz", h.favoriteQuiz)
+
+				student.GET("/question-sets", h.listQuestionSets)
+				student.POST("/question-sets", h.createQuestionSet)
+				student.GET("/question-sets/:id", h.getQuestionSet)
+				student.PUT("/question-sets/:id", h.updateQuestionSet)
+				student.DELETE("/question-sets/:id", h.deleteQuestionSet)
+				student.POST("/question-sets/:id/questions", h.addQuestionsToSet)
+				student.DELETE("/question-sets/:id/questions/:questionId", h.removeQuestionFromSet)
+				student.POST("/question-sets/:id/reorder", h.reorderSetQuestions)
+				student.GET("/question-sets/:id/quiz", h.getSetQuiz)
 			}
 		}
 	}
@@ -723,8 +747,13 @@ func (h *HTTPHandler) respondServiceError(c *gin.Context, err error) {
 		errors.Is(err, service.ErrCategoryNameEmpty),
 		errors.Is(err, service.ErrCategoryParentInvalid),
 		errors.Is(err, service.ErrTagNameEmpty),
-		errors.Is(err, service.ErrKnowledgePointNameEmpty):
+		errors.Is(err, service.ErrKnowledgePointNameEmpty),
+		errors.Is(err, service.ErrQuestionSetNameEmpty):
 		c.JSON(http.StatusBadRequest, gin.H{"message": err.Error()})
+	case errors.Is(err, service.ErrQuestionSetNotFound):
+		c.JSON(http.StatusNotFound, gin.H{"message": err.Error()})
+	case errors.Is(err, service.ErrQuestionSetForbidden):
+		c.JSON(http.StatusForbidden, gin.H{"message": err.Error()})
 	default:
 		h.log.Error("service error", "error", err.Error())
 		c.JSON(http.StatusInternalServerError, gin.H{"message": "internal server error"})
@@ -753,4 +782,290 @@ func cors() gin.HandlerFunc {
 		}
 		c.Next()
 	}
+}
+
+func (h *HTTPHandler) toggleFavorite(c *gin.Context) {
+	claims, ok := middleware.GetClaims(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"message": "invalid token"})
+		return
+	}
+	questionID, err := strconv.ParseUint(c.Param("questionId"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "invalid question id"})
+		return
+	}
+	favorited, err := h.favoriteSvc.ToggleFavorite(claims.UserID, uint(questionID))
+	if err != nil {
+		h.respondServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"favorited": favorited})
+}
+
+func (h *HTTPHandler) listFavorites(c *gin.Context) {
+	claims, ok := middleware.GetClaims(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"message": "invalid token"})
+		return
+	}
+	items, err := h.favoriteSvc.GetFavorites(claims.UserID)
+	if err != nil {
+		h.log.Error("list favorites failed", "error", err.Error())
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "failed to load favorites"})
+		return
+	}
+	c.JSON(http.StatusOK, items)
+}
+
+func (h *HTTPHandler) getFavoriteStatus(c *gin.Context) {
+	claims, ok := middleware.GetClaims(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"message": "invalid token"})
+		return
+	}
+
+	idsStr := c.QueryArray("questionIds")
+	questionIDs := make([]uint, 0, len(idsStr))
+	for _, s := range idsStr {
+		id, err := strconv.ParseUint(s, 10, 64)
+		if err == nil {
+			questionIDs = append(questionIDs, uint(id))
+		}
+	}
+
+	status, err := h.favoriteSvc.GetFavoriteStatus(claims.UserID, questionIDs)
+	if err != nil {
+		h.log.Error("get favorite status failed", "error", err.Error())
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "failed to load favorite status"})
+		return
+	}
+	c.JSON(http.StatusOK, status)
+}
+
+func (h *HTTPHandler) favoriteQuiz(c *gin.Context) {
+	claims, ok := middleware.GetClaims(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"message": "invalid token"})
+		return
+	}
+	questions, err := h.favoriteSvc.GetFavoriteQuestions(claims.UserID)
+	if err != nil {
+		h.respondServiceError(c, err)
+		return
+	}
+	if len(questions) == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"message": "no favorite questions"})
+		return
+	}
+
+	r := rand.New(rand.NewSource(time.Now().UnixNano()))
+	result := make([]service.StudentQuestion, 0, len(questions))
+	for _, q := range questions {
+		sq := service.StudentQuestion{
+			ID:          q.ID,
+			Type:        q.Type,
+			Title:       q.Title,
+			Description: q.Description,
+		}
+		if q.Type != models.QuestionTypeBlank {
+			opts := make([]service.StudentOption, 0, len(q.Options))
+			for _, opt := range q.Options {
+				opts = append(opts, service.StudentOption{ID: opt.ID, Content: opt.Content})
+			}
+			r.Shuffle(len(opts), func(i, j int) {
+				opts[i], opts[j] = opts[j], opts[i]
+			})
+			sq.Options = opts
+		}
+		result = append(result, sq)
+	}
+	c.JSON(http.StatusOK, result)
+}
+
+func (h *HTTPHandler) listQuestionSets(c *gin.Context) {
+	claims, ok := middleware.GetClaims(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"message": "invalid token"})
+		return
+	}
+	sets, err := h.questionSetSvc.ListSets(claims.UserID)
+	if err != nil {
+		h.log.Error("list question sets failed", "error", err.Error())
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "failed to load question sets"})
+		return
+	}
+	c.JSON(http.StatusOK, sets)
+}
+
+func (h *HTTPHandler) getQuestionSet(c *gin.Context) {
+	claims, ok := middleware.GetClaims(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"message": "invalid token"})
+		return
+	}
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "invalid set id"})
+		return
+	}
+	set, err := h.questionSetSvc.GetSet(claims.UserID, uint(id))
+	if err != nil {
+		h.respondServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, set)
+}
+
+func (h *HTTPHandler) createQuestionSet(c *gin.Context) {
+	claims, ok := middleware.GetClaims(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"message": "invalid token"})
+		return
+	}
+	var req dto.CreateQuestionSetRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "invalid request payload"})
+		return
+	}
+	set, err := h.questionSetSvc.CreateSet(claims.UserID, req)
+	if err != nil {
+		h.respondServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, set)
+}
+
+func (h *HTTPHandler) updateQuestionSet(c *gin.Context) {
+	claims, ok := middleware.GetClaims(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"message": "invalid token"})
+		return
+	}
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "invalid set id"})
+		return
+	}
+	var req dto.UpdateQuestionSetRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "invalid request payload"})
+		return
+	}
+	set, err := h.questionSetSvc.UpdateSet(claims.UserID, uint(id), req)
+	if err != nil {
+		h.respondServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, set)
+}
+
+func (h *HTTPHandler) deleteQuestionSet(c *gin.Context) {
+	claims, ok := middleware.GetClaims(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"message": "invalid token"})
+		return
+	}
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "invalid set id"})
+		return
+	}
+	if err := h.questionSetSvc.DeleteSet(claims.UserID, uint(id)); err != nil {
+		h.respondServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "question set deleted"})
+}
+
+func (h *HTTPHandler) addQuestionsToSet(c *gin.Context) {
+	claims, ok := middleware.GetClaims(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"message": "invalid token"})
+		return
+	}
+	setID, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "invalid set id"})
+		return
+	}
+	var req dto.AddQuestionsToSetRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "invalid request payload"})
+		return
+	}
+	if err := h.questionSetSvc.AddQuestions(claims.UserID, uint(setID), req.QuestionIDs); err != nil {
+		h.respondServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "questions added to set"})
+}
+
+func (h *HTTPHandler) removeQuestionFromSet(c *gin.Context) {
+	claims, ok := middleware.GetClaims(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"message": "invalid token"})
+		return
+	}
+	setID, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "invalid set id"})
+		return
+	}
+	questionID, err := strconv.ParseUint(c.Param("questionId"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "invalid question id"})
+		return
+	}
+	if err := h.questionSetSvc.RemoveQuestion(claims.UserID, uint(setID), uint(questionID)); err != nil {
+		h.respondServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "question removed from set"})
+}
+
+func (h *HTTPHandler) reorderSetQuestions(c *gin.Context) {
+	claims, ok := middleware.GetClaims(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"message": "invalid token"})
+		return
+	}
+	setID, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "invalid set id"})
+		return
+	}
+	var req dto.ReorderSetQuestionsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "invalid request payload"})
+		return
+	}
+	if err := h.questionSetSvc.ReorderQuestions(claims.UserID, uint(setID), req.QuestionIDs); err != nil {
+		h.respondServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "questions reordered"})
+}
+
+func (h *HTTPHandler) getSetQuiz(c *gin.Context) {
+	claims, ok := middleware.GetClaims(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"message": "invalid token"})
+		return
+	}
+	setID, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "invalid set id"})
+		return
+	}
+	questions, err := h.questionSetSvc.GetSetQuestions(claims.UserID, uint(setID))
+	if err != nil {
+		h.respondServiceError(c, err)
+		return
+	}
+	if len(questions) == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"message": "no questions in set"})
+		return
+	}
+	c.JSON(http.StatusOK, questions)
 }

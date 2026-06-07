@@ -142,3 +142,90 @@ export async function clearDraft(token, quizMode = 'normal') {
     token,
   });
 }
+
+export async function toggleFavorite(token, questionId) {
+  return apiRequest(`/student/favorites/${questionId}`, {
+    method: 'POST',
+    token,
+  });
+}
+
+export async function unfavoriteQuestion(token, questionId) {
+  return apiRequest(`/student/favorites/${questionId}`, {
+    method: 'DELETE',
+    token,
+  });
+}
+
+export async function fetchFavorites(token) {
+  return apiRequest('/student/favorites', { token });
+}
+
+export async function fetchFavoriteStatus(token, questionIds = []) {
+  const query = new URLSearchParams();
+  questionIds.forEach((id) => query.append('questionIds', id));
+  const queryString = query.toString();
+  return apiRequest(`/student/favorites/status${queryString ? '?' + queryString : ''}`, { token });
+}
+
+export async function fetchFavoriteQuiz(token) {
+  return apiRequest('/student/favorites/quiz', { token });
+}
+
+export async function fetchQuestionSets(token) {
+  return apiRequest('/student/question-sets', { token });
+}
+
+export async function fetchQuestionSet(token, setId) {
+  return apiRequest(`/student/question-sets/${setId}`, { token });
+}
+
+export async function createQuestionSet(token, data) {
+  return apiRequest('/student/question-sets', {
+    method: 'POST',
+    token,
+    body: data,
+  });
+}
+
+export async function updateQuestionSet(token, setId, data) {
+  return apiRequest(`/student/question-sets/${setId}`, {
+    method: 'PUT',
+    token,
+    body: data,
+  });
+}
+
+export async function deleteQuestionSet(token, setId) {
+  return apiRequest(`/student/question-sets/${setId}`, {
+    method: 'DELETE',
+    token,
+  });
+}
+
+export async function addQuestionsToSet(token, setId, questionIds) {
+  return apiRequest(`/student/question-sets/${setId}/questions`, {
+    method: 'POST',
+    token,
+    body: { questionIds },
+  });
+}
+
+export async function removeQuestionFromSet(token, setId, questionId) {
+  return apiRequest(`/student/question-sets/${setId}/questions/${questionId}`, {
+    method: 'DELETE',
+    token,
+  });
+}
+
+export async function reorderSetQuestions(token, setId, questionIds) {
+  return apiRequest(`/student/question-sets/${setId}/reorder`, {
+    method: 'POST',
+    token,
+    body: { questionIds },
+  });
+}
+
+export async function fetchSetQuiz(token, setId) {
+  return apiRequest(`/student/question-sets/${setId}/quiz`, { token });
+}

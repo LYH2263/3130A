@@ -202,4 +202,26 @@ type AttemptDraft struct {
 const (
 	QuizModeNormal = "normal"
 	QuizModeReview = "review"
+	QuizModeFavorite = "favorite"
+	QuizModeSet = "set"
 )
+
+type Favorite struct {
+	ID         uint      `gorm:"primaryKey" json:"id"`
+	UserID     uint      `gorm:"index;not null;uniqueIndex:idx_user_question" json:"userId"`
+	QuestionID uint      `gorm:"index;not null;uniqueIndex:idx_user_question" json:"questionId"`
+	Question   *Question `gorm:"foreignKey:QuestionID" json:"question,omitempty"`
+	CreatedAt  time.Time `json:"createdAt"`
+}
+
+type QuestionSet struct {
+	ID            uint      `gorm:"primaryKey" json:"id"`
+	UserID        uint      `gorm:"index;not null" json:"userId"`
+	Name          string    `gorm:"size:128;not null" json:"name"`
+	Description   string    `gorm:"size:500" json:"description"`
+	QuestionIDs   UintArray `gorm:"type:json" json:"questionIds"`
+	SortOrder     int       `gorm:"not null;default:0" json:"sortOrder"`
+	QuestionCount int       `gorm:"-" json:"questionCount"`
+	CreatedAt     time.Time `json:"createdAt"`
+	UpdatedAt     time.Time `json:"updatedAt"`
+}

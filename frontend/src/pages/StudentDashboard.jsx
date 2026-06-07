@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'react-hot-toast';
 
-import { apiRequest, fetchMistakeReviewQuiz, submitMistakeReview, saveDraft, getDraft, clearDraft, fetchExplanations } from '../api/client';
+import { apiRequest, fetchMistakeReviewQuiz, submitMistakeReview, saveDraft, getDraft, clearDraft, fetchExplanations, toggleFavorite, fetchFavoriteStatus, fetchSetQuiz } from '../api/client';
+import { FavoritesAndSets } from './FavoritesAndSets';
 import { StatCard } from '../components/StatCard';
 import { QUESTION_TYPE_LABELS } from '../utils/validators';
 
@@ -20,9 +21,10 @@ function getTypeBadgeClass(type) {
   }
 }
 
-function QuestionItem({ question, index, answer, onAnswer }) {
+function QuestionItem({ question, index, answer, onAnswer, favorited, onToggleFavorite }) {
   const type = question.type || 'single';
   const typeLabel = QUESTION_TYPE_LABELS[type] || '单选题';
+  const [favLoading, setFavLoading] = useState(false);
 
   const handleSingleSelect = (optionId) => {
     onAnswer(question.id, { optionId });
@@ -40,9 +42,32 @@ function QuestionItem({ question, index, answer, onAnswer }) {
     onAnswer(question.id, { blankAnswer: value });
   };
 
+  const handleToggleFavorite = async () => {
+    if (favLoading || !onToggleFavorite) return;
+    setFavLoading(true);
+    try {
+      await onToggleFavorite(question.id);
+    } finally {
+      setFavLoading(false);
+    }
+  };
+
   return (
-    <div className="rounded-2xl border border-slate-200 p-4">
-      <div className="mb-2 flex items-center gap-2">
+    <div className="relative rounded-2xl border border-slate-200 p-4">
+      <button
+        type="button"
+        className={`absolute right-3 top-3 text-xl transition-transform hover:scale-110 ${favLoading ? 'opacity-50' : ''}`}
+        onClick={handleToggleFavorite}
+        disabled={favLoading}
+        title={favorited ? '取消收藏' : '收藏题目'}
+      >
+        {favorited ? (
+          <span className="text-amber-500">★</span>
+        ) : (
+          <span className="text-slate-300 hover:text-amber-400">☆</span>
+        )}
+      </button>
+      <div className="mb-2 flex items-center gap-2 pr-8">
         <span className="text-sm font-semibold text-slate-700">
           {index + 1}. {question.title}
         </span>
@@ -443,6 +468,8 @@ export function StudentDashboard({ user, token, onLogout }) {
   const [showDraftDialog, setShowDraftDialog] = useState(false);
   const [draftData, setDraftData] = useState(null);
   const [pendingStartMode, setPendingStartMode] = useState(null);
+  const [favoriteStatus, setFavoriteStatus] = useState({});
+  const [activeTab, setActiveTab] = useState('quiz');
   const saveDraftTimerRef = useRef(null);
   const saveDraftStatusTimerRef = useRef(null);
 
@@ -518,6 +545,29 @@ export function StudentDashboard({ user, token, onLogout }) {
     }
   };
 
+  const loadFavoriteStatus = async (questionIds) => {
+    if (!questionIds || questionIds.length === 0) return;
+    try {
+      const status = await fetchFavoriteStatus(token, questionIds);
+      setFavoriteStatus(status || {});
+    } catch (error) {
+      console.warn('加载收藏状态失败:', error);
+    }
+  };
+
+  const handleToggleFavorite = async (questionId) => {
+    try {
+      const result = await toggleFavorite(token, questionId);
+      setFavoriteStatus((prev) => ({
+        ...prev,
+        [questionId]: result?.favorited ?? !prev[questionId],
+      }));
+      toast.success(result?.favorited ? '已收藏' : '已取消收藏');
+    } catch (error) {
+      toast.error(error.message || '操作失败');
+    }
+  };
+
   const startFreshQuiz = async (mode) => {
     try {
       setLoadingQuiz(true);
@@ -530,6 +580,9 @@ export function StudentDashboard({ user, token, onLogout }) {
           return;
         }
         toast.success(`已生成错题重练卷，共${quiz.length}道题`);
+      } else if (mode === 'set') {
+        quiz = await fetchSetQuiz(token, mode);
+        toast.success(`已生成题集练习卷，共${quiz.length}道题`);
       } else {
         quiz = await apiRequest('/student/questions?limit=10', { token });
         toast.success('已生成新试卷，选项顺序已随机');
@@ -541,8 +594,35 @@ export function StudentDashboard({ user, token, onLogout }) {
       setNormalQuizKPMap({});
       setMistakeReviewResult(null);
       setQuizMode(mode);
+      loadFavoriteStatus(quiz.map((q) => q.id));
     } catch (error) {
       toast.error(error.message || '拉取试卷失败');
+    } finally {
+      setLoadingQuiz(false);
+    }
+  };
+
+  const startSetPractice = async (setId, setName) => {
+    try {
+      setLoadingQuiz(true);
+      const quiz = await fetchSetQuiz(token, setId);
+      if (quiz.length === 0) {
+        toast.error('题集为空，无法开始练习');
+        setLoadingQuiz(false);
+        return;
+      }
+      setQuestions(quiz);
+      setAnswers({});
+      setLastResult(null);
+      setNormalQuizExplanations([]);
+      setNormalQuizKPMap({});
+      setMistakeReviewResult(null);
+      setQuizMode(`set-${setId}`);
+      setActiveTab('quiz');
+      loadFavoriteStatus(quiz.map((q) => q.id));
+      toast.success(`已生成「${setName}」专项练习，共${quiz.length}道题`);
+    } catch (error) {
+      toast.error(error.message || '拉取题集失败');
     } finally {
       setLoadingQuiz(false);
     }
@@ -766,29 +846,49 @@ export function StudentDashboard({ user, token, onLogout }) {
 
   return (
     <div className="min-h-screen bg-board px-4 py-6 md:px-8 md:py-8">
-      <header className="mx-auto mb-6 flex max-w-7xl flex-col gap-3 rounded-3xl border border-white/70 bg-white/90 px-6 py-5 shadow-card md:flex-row md:items-center md:justify-between">
-        <div>
-          <p className="text-xs uppercase tracking-[0.25em] text-emerald-700">Student Console</p>
-          <h1 className="mt-1 text-2xl font-bold text-slate-800">学生答题中心</h1>
-          <p className="text-sm text-slate-600">当前班级：{className}</p>
+      <header className="mx-auto mb-6 max-w-7xl rounded-3xl border border-white/70 bg-white/90 px-6 py-5 shadow-card">
+        <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div>
+            <p className="text-xs uppercase tracking-[0.25em] text-emerald-700">Student Console</p>
+            <h1 className="mt-1 text-2xl font-bold text-slate-800">学生答题中心</h1>
+            <p className="text-sm text-slate-600">当前班级：{className}</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {activeTab === 'quiz' && (
+              <>
+                <button
+                  className="btn btn-outline btn-primary"
+                  onClick={startQuiz}
+                  disabled={loadingQuiz}
+                >
+                  {loadingQuiz ? '生成中...' : '开始新一轮答题'}
+                </button>
+                <button
+                  className="btn btn-secondary"
+                  onClick={startMistakeReview}
+                  disabled={loadingQuiz || pendingMistakes.length === 0}
+                >
+                  错题重练
+                </button>
+              </>
+            )}
+            <button className="btn btn-neutral" onClick={onLogout}>
+              退出登录
+            </button>
+          </div>
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="tabs tabs-boxed bg-slate-100/50">
           <button
-            className="btn btn-outline btn-primary"
-            onClick={startQuiz}
-            disabled={loadingQuiz}
+            className={`tab ${activeTab === 'quiz' ? 'tab-active' : ''}`}
+            onClick={() => setActiveTab('quiz')}
           >
-            {loadingQuiz ? '生成中...' : '开始新一轮答题'}
+            📝 答题中心
           </button>
           <button
-            className="btn btn-secondary"
-            onClick={startMistakeReview}
-            disabled={loadingQuiz || pendingMistakes.length === 0}
+            className={`tab ${activeTab === 'favorites' ? 'tab-active' : ''}`}
+            onClick={() => setActiveTab('favorites')}
           >
-            错题重练
-          </button>
-          <button className="btn btn-neutral" onClick={onLogout}>
-            退出登录
+            ⭐ 我的收藏与题集
           </button>
         </div>
       </header>
@@ -804,6 +904,11 @@ export function StudentDashboard({ user, token, onLogout }) {
             ))}
           </div>
         </div>
+      ) : activeTab === 'favorites' ? (
+        <FavoritesAndSets
+          token={token}
+          onStartSetPractice={startSetPractice}
+        />
       ) : (
         <main className="mx-auto grid max-w-7xl gap-5 lg:grid-cols-[1.2fr,0.8fr]">
           <section className="space-y-5">
@@ -872,6 +977,8 @@ export function StudentDashboard({ user, token, onLogout }) {
                       index={index}
                       answer={answers[question.id]}
                       onAnswer={handleAnswer}
+                      favorited={!!favoriteStatus[question.id]}
+                      onToggleFavorite={handleToggleFavorite}
                     />
                   ))}
                 </div>
