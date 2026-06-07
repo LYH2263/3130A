@@ -26,4 +26,5 @@ var (
 	ErrTagNotFound          = errors.New("tag not found")
 	ErrTagNameEmpty         = errors.New("tag name cannot be empty")
 	ErrTagExists            = errors.New("tag already exists")
+	ErrDraftNotFound        = errors.New("draft not found")
 )

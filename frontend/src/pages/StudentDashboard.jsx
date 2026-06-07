@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'react-hot-toast';
 
-import { apiRequest, fetchMistakeReviewQuiz, submitMistakeReview } from '../api/client';
+import { apiRequest, fetchMistakeReviewQuiz, submitMistakeReview, saveDraft, getDraft, clearDraft } from '../api/client';
 import { StatCard } from '../components/StatCard';
 import { QUESTION_TYPE_LABELS } from '../utils/validators';
 
@@ -334,6 +334,12 @@ export function StudentDashboard({ user, token, onLogout }) {
   const [lastResult, setLastResult] = useState(null);
   const [quizMode, setQuizMode] = useState('normal');
   const [mistakeReviewResult, setMistakeReviewResult] = useState(null);
+  const [saveDraftStatus, setSaveDraftStatus] = useState('idle');
+  const [showDraftDialog, setShowDraftDialog] = useState(false);
+  const [draftData, setDraftData] = useState(null);
+  const [pendingStartMode, setPendingStartMode] = useState(null);
+  const saveDraftTimerRef = useRef(null);
+  const saveDraftStatusTimerRef = useRef(null);
 
   const className = user.classRoom?.name || '未分班';
 
@@ -378,16 +384,56 @@ export function StudentDashboard({ user, token, onLogout }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
+  useEffect(() => {
+    return () => {
+      if (saveDraftTimerRef.current) {
+        clearTimeout(saveDraftTimerRef.current);
+      }
+      if (saveDraftStatusTimerRef.current) {
+        clearTimeout(saveDraftStatusTimerRef.current);
+      }
+    };
+  }, []);
+
   const startQuiz = async () => {
     try {
       setLoadingQuiz(true);
-      const quiz = await apiRequest('/student/questions?limit=10', { token });
+      const draft = await getDraft(token, 'normal').catch(() => null);
+      if (draft && draft.questions && draft.questions.length > 0) {
+        setDraftData(draft);
+        setPendingStartMode('normal');
+        setShowDraftDialog(true);
+        setLoadingQuiz(false);
+        return;
+      }
+      await startFreshQuiz('normal');
+    } catch (error) {
+      toast.error(error.message || '拉取试卷失败');
+      setLoadingQuiz(false);
+    }
+  };
+
+  const startFreshQuiz = async (mode) => {
+    try {
+      setLoadingQuiz(true);
+      let quiz;
+      if (mode === 'review') {
+        quiz = await fetchMistakeReviewQuiz(token, 10);
+        if (quiz.length === 0) {
+          toast.error('没有待复习的错题');
+          setLoadingQuiz(false);
+          return;
+        }
+        toast.success(`已生成错题重练卷，共${quiz.length}道题`);
+      } else {
+        quiz = await apiRequest('/student/questions?limit=10', { token });
+        toast.success('已生成新试卷，选项顺序已随机');
+      }
       setQuestions(quiz);
       setAnswers({});
       setLastResult(null);
       setMistakeReviewResult(null);
-      setQuizMode('normal');
-      toast.success('已生成新试卷，选项顺序已随机');
+      setQuizMode(mode);
     } catch (error) {
       toast.error(error.message || '拉取试卷失败');
     } finally {
@@ -402,20 +448,17 @@ export function StudentDashboard({ user, token, onLogout }) {
     }
     try {
       setLoadingQuiz(true);
-      const quiz = await fetchMistakeReviewQuiz(token, 10);
-      if (quiz.length === 0) {
-        toast.error('没有待复习的错题');
+      const draft = await getDraft(token, 'review').catch(() => null);
+      if (draft && draft.questions && draft.questions.length > 0) {
+        setDraftData(draft);
+        setPendingStartMode('review');
+        setShowDraftDialog(true);
+        setLoadingQuiz(false);
         return;
       }
-      setQuestions(quiz);
-      setAnswers({});
-      setLastResult(null);
-      setMistakeReviewResult(null);
-      setQuizMode('review');
-      toast.success(`已生成错题重练卷，共${quiz.length}道题`);
+      await startFreshQuiz('review');
     } catch (error) {
       toast.error(error.message || '生成错题重练卷失败');
-    } finally {
       setLoadingQuiz(false);
     }
   };
@@ -443,11 +486,84 @@ export function StudentDashboard({ user, token, onLogout }) {
     }
   };
 
+  const doSaveDraft = async (questionsToSave, answersToSave, mode) => {
+    try {
+      setSaveDraftStatus('saving');
+      await saveDraft(token, mode, questionsToSave, answersToSave);
+      setSaveDraftStatus('saved');
+      if (saveDraftStatusTimerRef.current) {
+        clearTimeout(saveDraftStatusTimerRef.current);
+      }
+      saveDraftStatusTimerRef.current = setTimeout(() => {
+        setSaveDraftStatus('idle');
+      }, 2000);
+    } catch (error) {
+      setSaveDraftStatus('error');
+      console.error('save draft failed', error);
+    }
+  };
+
+  const debouncedSaveDraft = (questionsToSave, answersToSave, mode) => {
+    if (saveDraftTimerRef.current) {
+      clearTimeout(saveDraftTimerRef.current);
+    }
+    saveDraftTimerRef.current = setTimeout(() => {
+      doSaveDraft(questionsToSave, answersToSave, mode);
+    }, 800);
+  };
+
+  const resumeDraft = () => {
+    if (!draftData) return;
+    const restoredAnswers = {};
+    if (draftData.answers) {
+      Object.keys(draftData.answers).forEach((key) => {
+        const numKey = Number(key);
+        if (!isNaN(numKey)) {
+          restoredAnswers[numKey] = draftData.answers[key];
+        }
+      });
+    }
+    setQuestions(draftData.questions);
+    setAnswers(restoredAnswers);
+    setQuizMode(draftData.quizMode || 'normal');
+    setLastResult(null);
+    setMistakeReviewResult(null);
+    setShowDraftDialog(false);
+    setDraftData(null);
+    setPendingStartMode(null);
+    toast.success('已恢复上次答题进度');
+  };
+
+  const handleDiscardAndRestart = async () => {
+    const mode = pendingStartMode || draftData?.quizMode || 'normal';
+    try {
+      await clearDraft(token, mode);
+    } catch (error) {
+      console.error('discard draft failed', error);
+    }
+    setShowDraftDialog(false);
+    setDraftData(null);
+    setPendingStartMode(null);
+    await startFreshQuiz(mode);
+  };
+
+  const handleCloseDraftDialog = () => {
+    setShowDraftDialog(false);
+    setDraftData(null);
+    setPendingStartMode(null);
+  };
+
   const handleAnswer = (questionId, answerData) => {
-    setAnswers((prev) => ({
-      ...prev,
-      [questionId]: { ...prev[questionId], ...answerData },
-    }));
+    setAnswers((prev) => {
+      const newAnswers = {
+        ...prev,
+        [questionId]: { ...prev[questionId], ...answerData },
+      };
+      if (questions.length > 0) {
+        debouncedSaveDraft(questions, newAnswers, quizMode);
+      }
+      return newAnswers;
+    });
   };
 
   const buildAnswersPayload = () => {
@@ -579,9 +695,32 @@ export function StudentDashboard({ user, token, onLogout }) {
 
             <article className="rounded-3xl border border-slate-200 bg-white p-5 shadow-card">
               <div className="mb-3 flex items-center justify-between">
-                <h2 className="text-lg font-semibold text-slate-800">
-                  {quizMode === 'review' ? '错题重练' : '在线答题'}
-                </h2>
+                <div className="flex items-center gap-3">
+                  <h2 className="text-lg font-semibold text-slate-800">
+                    {quizMode === 'review' ? '错题重练' : '在线答题'}
+                  </h2>
+                  {questions.length > 0 && (
+                    <span
+                      className={`text-xs transition-opacity ${
+                        saveDraftStatus === 'saved'
+                          ? 'text-emerald-600 opacity-100'
+                          : saveDraftStatus === 'saving'
+                          ? 'text-slate-400 opacity-100'
+                          : saveDraftStatus === 'error'
+                          ? 'text-red-500 opacity-100'
+                          : 'opacity-0'
+                      }`}
+                    >
+                      {saveDraftStatus === 'saved'
+                        ? '✓ 已保存'
+                        : saveDraftStatus === 'saving'
+                        ? '保存中...'
+                        : saveDraftStatus === 'error'
+                        ? '保存失败'
+                        : ''}
+                    </span>
+                  )}
+                </div>
                 <button
                   className="btn btn-sm btn-secondary"
                   onClick={submitQuiz}
@@ -693,6 +832,35 @@ export function StudentDashboard({ user, token, onLogout }) {
             </article>
           </section>
         </main>
+      )}
+
+      {showDraftDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="mx-4 w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
+            <h3 className="text-lg font-semibold text-slate-800">发现未完成的答题</h3>
+            <p className="mt-2 text-sm text-slate-600">
+              你有一份未完成的{ draftData?.quizMode === 'review' ? '错题重练' : '答题' }草稿，
+              {draftData?.updatedAt && `最后更新于 ${draftData.updatedAt}`}
+            </p>
+            <p className="mt-1 text-sm text-slate-500">
+              共 {draftData?.questions?.length || 0} 道题
+            </p>
+            <div className="mt-6 flex gap-3">
+              <button
+                className="btn btn-primary flex-1"
+                onClick={resumeDraft}
+              >
+                继续上次
+              </button>
+              <button
+                className="btn btn-outline flex-1"
+                onClick={handleDiscardAndRestart}
+              >
+                放弃重开
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

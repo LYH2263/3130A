@@ -1,6 +1,7 @@
 package service
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -519,4 +520,81 @@ func findAttemptByClass(attempts []models.Attempt, classID uint) (models.Attempt
 
 func IsNotFound(err error) bool {
 	return errors.Is(err, gorm.ErrRecordNotFound)
+}
+
+func (s *AttemptService) SaveDraft(userID uint, req dto.SaveDraftRequest) error {
+	questionsJSON, err := json.Marshal(req.Questions)
+	if err != nil {
+		return fmt.Errorf("marshal questions: %w", err)
+	}
+	answersJSON, err := json.Marshal(req.Answers)
+	if err != nil {
+		return fmt.Errorf("marshal answers: %w", err)
+	}
+
+	var draft models.AttemptDraft
+	err = s.db.Where("user_id = ? AND quiz_mode = ?", userID, req.QuizMode).First(&draft).Error
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return fmt.Errorf("find draft: %w", err)
+	}
+
+	if draft.ID == 0 {
+		draft = models.AttemptDraft{
+			UserID:       userID,
+			QuizMode:     req.QuizMode,
+			QuestionData: string(questionsJSON),
+			AnswerData:   string(answersJSON),
+		}
+		if err := s.db.Create(&draft).Error; err != nil {
+			return fmt.Errorf("create draft: %w", err)
+		}
+	} else {
+		draft.QuestionData = string(questionsJSON)
+		draft.AnswerData = string(answersJSON)
+		if err := s.db.Save(&draft).Error; err != nil {
+			return fmt.Errorf("update draft: %w", err)
+		}
+	}
+
+	s.log.Info("draft saved", "userID", userID, "quizMode", req.QuizMode)
+	return nil
+}
+
+func (s *AttemptService) GetDraft(userID uint, quizMode string) (*dto.DraftResponse, error) {
+	var draft models.AttemptDraft
+	err := s.db.Where("user_id = ? AND quiz_mode = ?", userID, quizMode).First(&draft).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrDraftNotFound
+		}
+		return nil, fmt.Errorf("find draft: %w", err)
+	}
+
+	var questions []map[string]interface{}
+	if err := json.Unmarshal([]byte(draft.QuestionData), &questions); err != nil {
+		return nil, fmt.Errorf("unmarshal questions: %w", err)
+	}
+
+	var answers map[string]interface{}
+	if err := json.Unmarshal([]byte(draft.AnswerData), &answers); err != nil {
+		return nil, fmt.Errorf("unmarshal answers: %w", err)
+	}
+
+	return &dto.DraftResponse{
+		QuizMode:  draft.QuizMode,
+		Questions: questions,
+		Answers:   answers,
+		UpdatedAt: draft.UpdatedAt.Format("2006-01-02 15:04:05"),
+	}, nil
+}
+
+func (s *AttemptService) ClearDraft(userID uint, quizMode string) error {
+	result := s.db.Where("user_id = ? AND quiz_mode = ?", userID, quizMode).Delete(&models.AttemptDraft{})
+	if result.Error != nil {
+		return fmt.Errorf("delete draft: %w", result.Error)
+	}
+	if result.RowsAffected > 0 {
+		s.log.Info("draft cleared", "userID", userID, "quizMode", quizMode)
+	}
+	return nil
 }

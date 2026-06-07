@@ -101,6 +101,9 @@ func (h *HTTPHandler) Router() *gin.Engine {
 				student.GET("/attempts", h.studentAttempts)
 				student.GET("/mistake-review/quiz", h.mistakeReviewQuiz)
 				student.POST("/mistake-review/submit", h.mistakeReviewSubmit)
+				student.POST("/draft", h.saveDraft)
+				student.GET("/draft", h.getDraft)
+				student.DELETE("/draft", h.clearDraft)
 			}
 		}
 	}
@@ -327,6 +330,9 @@ func (h *HTTPHandler) submit(c *gin.Context) {
 		h.respondServiceError(c, err)
 		return
 	}
+
+	_ = h.attemptSvc.ClearDraft(claims.UserID, models.QuizModeNormal)
+
 	c.JSON(http.StatusCreated, result)
 }
 
@@ -376,6 +382,9 @@ func (h *HTTPHandler) mistakeReviewSubmit(c *gin.Context) {
 		h.respondServiceError(c, err)
 		return
 	}
+
+	_ = h.attemptSvc.ClearDraft(claims.UserID, models.QuizModeReview)
+
 	c.JSON(http.StatusCreated, result)
 }
 
@@ -391,6 +400,74 @@ func (h *HTTPHandler) studentAttempts(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, items)
+}
+
+func (h *HTTPHandler) saveDraft(c *gin.Context) {
+	claims, ok := middleware.GetClaims(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"message": "invalid token"})
+		return
+	}
+
+	var req dto.SaveDraftRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "invalid draft payload"})
+		return
+	}
+
+	if err := h.attemptSvc.SaveDraft(claims.UserID, req); err != nil {
+		h.log.Error("save draft failed", "error", err.Error())
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "save draft failed"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "draft saved"})
+}
+
+func (h *HTTPHandler) getDraft(c *gin.Context) {
+	claims, ok := middleware.GetClaims(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"message": "invalid token"})
+		return
+	}
+
+	quizMode := c.DefaultQuery("mode", "normal")
+	if quizMode != "normal" && quizMode != "review" {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "invalid quiz mode"})
+		return
+	}
+
+	draft, err := h.attemptSvc.GetDraft(claims.UserID, quizMode)
+	if err != nil {
+		if errors.Is(err, service.ErrDraftNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"message": "draft not found"})
+			return
+		}
+		h.log.Error("get draft failed", "error", err.Error())
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "get draft failed"})
+		return
+	}
+	c.JSON(http.StatusOK, draft)
+}
+
+func (h *HTTPHandler) clearDraft(c *gin.Context) {
+	claims, ok := middleware.GetClaims(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"message": "invalid token"})
+		return
+	}
+
+	quizMode := c.DefaultQuery("mode", "normal")
+	if quizMode != "normal" && quizMode != "review" {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "invalid quiz mode"})
+		return
+	}
+
+	if err := h.attemptSvc.ClearDraft(claims.UserID, quizMode); err != nil {
+		h.log.Error("clear draft failed", "error", err.Error())
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "clear draft failed"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "draft cleared"})
 }
 
 func (h *HTTPHandler) listCategories(c *gin.Context) {

@@ -164,3 +164,18 @@ type MistakeReview struct {
 	CreatedAt       time.Time `json:"createdAt"`
 	UpdatedAt       time.Time `json:"updatedAt"`
 }
+
+type AttemptDraft struct {
+	ID           uint      `gorm:"primaryKey" json:"id"`
+	UserID       uint      `gorm:"index;not null;uniqueIndex:idx_user_mode" json:"userId"`
+	QuizMode     string    `gorm:"size:16;not null;uniqueIndex:idx_user_mode" json:"quizMode"`
+	QuestionData string    `gorm:"type:json;not null" json:"-"`
+	AnswerData   string    `gorm:"type:json;not null" json:"-"`
+	UpdatedAt    time.Time `json:"updatedAt"`
+	CreatedAt    time.Time `json:"createdAt"`
+}
+
+const (
+	QuizModeNormal = "normal"
+	QuizModeReview = "review"
+)

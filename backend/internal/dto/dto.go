@@ -138,3 +138,16 @@ type MistakeReviewResult struct {
 	StillNeedReview  []MistakeReviewAnswerDetail `json:"stillNeedReview"`
 	Details          []MistakeReviewAnswerDetail `json:"details"`
 }
+
+type SaveDraftRequest struct {
+	QuizMode  string                   `json:"quizMode" binding:"required,oneof=normal review"`
+	Questions []map[string]interface{} `json:"questions" binding:"required,min=1"`
+	Answers   map[string]interface{}   `json:"answers" binding:"required"`
+}
+
+type DraftResponse struct {
+	QuizMode  string                   `json:"quizMode"`
+	Questions []map[string]interface{} `json:"questions"`
+	Answers   map[string]interface{}   `json:"answers"`
+	UpdatedAt string                   `json:"updatedAt"`
+}

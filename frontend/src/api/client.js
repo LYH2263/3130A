@@ -92,3 +92,26 @@ export async function submitMistakeReview(token, answers) {
     body: { answers },
   });
 }
+
+export async function saveDraft(token, quizMode, questions, answers) {
+  return apiRequest('/student/draft', {
+    method: 'POST',
+    token,
+    body: {
+      quizMode,
+      questions,
+      answers,
+    },
+  });
+}
+
+export async function getDraft(token, quizMode = 'normal') {
+  return apiRequest(`/student/draft?mode=${quizMode}`, { token });
+}
+
+export async function clearDraft(token, quizMode = 'normal') {
+  return apiRequest(`/student/draft?mode=${quizMode}`, {
+    method: 'DELETE',
+    token,
+  });
+}
