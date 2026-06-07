@@ -137,11 +137,11 @@ export function TeacherDashboard({ user, token, onLogout }) {
         apiRequest('/classes', { token }),
       ]);
       setOverview(overviewData);
-      setStats(statData);
-      setAttempts(attemptData);
-      setCategories(categoryData);
-      setTags(tagData);
-      setKnowledgePoints(kpData);
+      setStats(statData || []);
+      setAttempts(attemptData || []);
+      setCategories(categoryData || []);
+      setTags(tagData || []);
+      setKnowledgePoints(kpData || []);
       setClasses(classData || []);
       if (categoryData && categoryData.length > 0) {
         setExpandedCategoryIds(categoryData.map((c) => c.id));

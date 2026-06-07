@@ -707,8 +707,8 @@ export function StudentDashboard({ user, token, onLogout }) {
         apiRequest('/student/attempts', { token }),
         fetchExamConfigs(token),
       ]);
-      setMistakes(mistakeData);
-      setAttempts(attemptData);
+      setMistakes(mistakeData || []);
+      setAttempts(attemptData || []);
       setExamConfigs(examConfigData || []);
       const defaultConfig = (examConfigData || []).find((c) => c.isDefault);
       if (defaultConfig && !selectedExamConfigId) {

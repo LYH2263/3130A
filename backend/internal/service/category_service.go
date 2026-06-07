@@ -28,7 +28,7 @@ func (s *CategoryService) ListTree() ([]models.Category, error) {
 }
 
 func buildTree(categories []models.Category, parentID *uint) []models.Category {
-	var result []models.Category
+	result := make([]models.Category, 0)
 	for _, cat := range categories {
 		var isMatch bool
 		if parentID == nil {
