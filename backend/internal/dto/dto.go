@@ -122,8 +122,15 @@ type AnswerDetail struct {
 	Score      int    `json:"score"`
 	MaxScore   int    `json:"maxScore"`
 	IsCorrect  bool   `json:"isCorrect"`
+	Status     string `json:"status"`
 	Type       string `json:"type"`
 }
+
+const (
+	AnswerStatusCorrect = "correct"
+	AnswerStatusPartial = "partial"
+	AnswerStatusWrong   = "wrong"
+)
 
 type SubmitResultDetail struct {
 	AttemptID uint           `json:"attemptId"`

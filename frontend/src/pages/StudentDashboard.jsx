@@ -199,6 +199,19 @@ function ResultDetail({ questions, details, explanations, knowledgePointsMap }) 
     return map;
   }, [details]);
 
+  const getStatusInfo = (detail) => {
+    const status = detail.status || (detail.isCorrect ? 'correct' : 'wrong');
+    switch (status) {
+      case 'correct':
+        return { label: '正确', badgeClass: 'badge-success', borderClass: 'border-emerald-300 bg-emerald-50' };
+      case 'partial':
+        return { label: '部分正确', badgeClass: 'badge-warning', borderClass: 'border-amber-300 bg-amber-50' };
+      case 'wrong':
+      default:
+        return { label: '错误', badgeClass: 'badge-error', borderClass: 'border-red-300 bg-red-50' };
+    }
+  };
+
   const toggleExpand = (questionId) => {
     setExpandedIds((prev) =>
       prev.includes(questionId)
@@ -217,13 +230,12 @@ function ResultDetail({ questions, details, explanations, knowledgePointsMap }) 
         const isExpanded = expandedIds.includes(q.id);
         const explanation = explanations?.find((e) => e.questionId === q.id);
         const kps = knowledgePointsMap?.[q.id] || [];
+        const statusInfo = getStatusInfo(detail);
 
         return (
           <div
             key={q.id}
-            className={`rounded-xl border p-3 ${
-              detail.isCorrect ? 'border-emerald-300 bg-emerald-50' : 'border-red-300 bg-red-50'
-            }`}
+            className={`rounded-xl border p-3 ${statusInfo.borderClass}`}
           >
             <div className="flex items-start justify-between gap-2">
               <p className="text-sm font-medium text-slate-700">
@@ -231,11 +243,9 @@ function ResultDetail({ questions, details, explanations, knowledgePointsMap }) 
               </p>
               <div className="flex flex-col items-end gap-1">
                 <span
-                  className={`badge badge-xs ${
-                    detail.isCorrect ? 'badge-success' : 'badge-error'
-                  }`}
+                  className={`badge badge-xs ${statusInfo.badgeClass}`}
                 >
-                  {detail.isCorrect ? '正确' : '错误'}
+                  {statusInfo.label}
                 </span>
                 <span className="text-xs font-mono text-slate-500">
                   {detail.score}/{detail.maxScore}分

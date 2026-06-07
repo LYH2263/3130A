@@ -101,7 +101,8 @@ func (s *AttemptService) Submit(userID uint, classID uint, req dto.SubmitRequest
 			return nil, ErrInvalidSubmission
 		}
 
-		score, maxScore, isCorrect := gradeQuestion(question, answer)
+		score, maxScore, status := gradeQuestion(question, answer)
+		isCorrect := status == dto.AnswerStatusCorrect
 
 		totalScore += score
 		totalMaxScore += maxScore
@@ -129,6 +130,7 @@ func (s *AttemptService) Submit(userID uint, classID uint, req dto.SubmitRequest
 			Score:      score,
 			MaxScore:   maxScore,
 			IsCorrect:  isCorrect,
+			Status:     status,
 			Type:       question.Type,
 		})
 	}
@@ -156,20 +158,34 @@ func (s *AttemptService) Submit(userID uint, classID uint, req dto.SubmitRequest
 	}, nil
 }
 
-func gradeQuestion(question models.Question, answer dto.SubmitAnswerItem) (int, int, bool) {
+func gradeQuestion(question models.Question, answer dto.SubmitAnswerItem) (int, int, string) {
 	maxScore := 100
 	switch question.Type {
 	case models.QuestionTypeSingle, models.QuestionTypeJudge:
 		score := gradeSingleOrJudge(question, answer)
-		return score, maxScore, score == maxScore
+		status := dto.AnswerStatusWrong
+		if score == maxScore {
+			status = dto.AnswerStatusCorrect
+		}
+		return score, maxScore, status
 	case models.QuestionTypeMultiple:
 		score := gradeMultiple(question, answer)
-		return score, maxScore, score == maxScore
+		status := dto.AnswerStatusWrong
+		if score == maxScore {
+			status = dto.AnswerStatusCorrect
+		} else if score > 0 {
+			status = dto.AnswerStatusPartial
+		}
+		return score, maxScore, status
 	case models.QuestionTypeBlank:
 		score := gradeBlank(question, answer)
-		return score, maxScore, score == maxScore
+		status := dto.AnswerStatusWrong
+		if score == maxScore {
+			status = dto.AnswerStatusCorrect
+		}
+		return score, maxScore, status
 	default:
-		return 0, maxScore, false
+		return 0, maxScore, dto.AnswerStatusWrong
 	}
 }
 
@@ -260,7 +276,8 @@ func gradeBlank(question models.Question, answer dto.SubmitAnswerItem) int {
 				return 100
 			}
 		case models.BlankMatchRegex:
-			re, err := regexp.Compile(correctAns)
+			fullPattern := "^(?:" + correctAns + ")$"
+			re, err := regexp.Compile(fullPattern)
 			if err != nil {
 				continue
 			}

@@ -208,7 +208,8 @@ func (s *MistakeReviewService) SubmitReview(userID uint, classID uint, req dto.S
 			return nil, ErrInvalidSubmission
 		}
 
-		score, maxScore, isCorrect := gradeQuestion(question, answer)
+		score, maxScore, status := gradeQuestion(question, answer)
+		isCorrect := status == dto.AnswerStatusCorrect
 		totalScore += score
 		totalMaxScore += maxScore
 
@@ -284,7 +285,8 @@ func (s *MistakeReviewService) SubmitReview(userID uint, classID uint, req dto.S
 	answersModel := make([]models.AttemptAnswer, 0, len(req.Answers))
 	for _, answer := range req.Answers {
 		question := questionMap[answer.QuestionID]
-		score, maxScore, isCorrect := gradeQuestion(question, answer)
+		score, maxScore, status := gradeQuestion(question, answer)
+		isCorrect := status == dto.AnswerStatusCorrect
 		ansModel := models.AttemptAnswer{
 			QuestionID:   answer.QuestionID,
 			QuestionType: question.Type,
