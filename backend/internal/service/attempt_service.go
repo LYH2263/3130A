@@ -117,6 +117,7 @@ func (s *AttemptService) StartQuiz(userID uint, classID uint, req dto.StartQuizR
 		Total:        0,
 		ExamConfigID: &examConfig.ID,
 		ExamConfig:   examConfig,
+		Mode:         models.AttemptModeNormal,
 		StartedAt:    &now,
 		Deadline:     &deadline,
 		Timeout:      false,
@@ -295,6 +296,7 @@ func (s *AttemptService) Submit(userID uint, classID uint, req dto.SubmitRequest
 			Score:   totalScore,
 			Total:   totalMaxScore,
 			Answers: answersModel,
+			Mode:    models.AttemptModeNormal,
 			Status:  models.AttemptStatusCompleted,
 		}
 		if err := s.db.Create(&newAttempt).Error; err != nil {
@@ -936,6 +938,7 @@ type userScore struct {
 	attemptCount int
 	correctCount int
 	totalCount   int
+	hasAttempts  bool
 }
 
 func (s *AttemptService) GetLeaderboard(query dto.LeaderboardQuery, currentUserID *uint) (*dto.LeaderboardResult, error) {
@@ -953,8 +956,17 @@ func (s *AttemptService) GetLeaderboard(query dto.LeaderboardQuery, currentUserI
 		query.Page = 1
 	}
 
+	var students []models.User
+	studentQuery := s.db.Where("role = ?", models.RoleStudent)
+	if query.ClassID != nil {
+		studentQuery = studentQuery.Where("class_id = ?", *query.ClassID)
+	}
+	if err := studentQuery.Preload("ClassRoom").Order("username asc").Find(&students).Error; err != nil {
+		return nil, fmt.Errorf("load students for leaderboard: %w", err)
+	}
+
 	var attempts []models.Attempt
-	db := s.db.Preload("User").Preload("ClassRoom")
+	db := s.db.Where("mode = ?", models.AttemptModeNormal)
 
 	if query.ClassID != nil {
 		db = db.Where("class_id = ?", *query.ClassID)
@@ -966,23 +978,28 @@ func (s *AttemptService) GetLeaderboard(query dto.LeaderboardQuery, currentUserI
 
 	userMap := make(map[uint]*userScore)
 
+	for _, student := range students {
+		className := ""
+		classID := uint(0)
+		if student.ClassRoom.ID > 0 {
+			className = student.ClassRoom.Name
+			classID = student.ClassRoom.ID
+		}
+		userMap[student.ID] = &userScore{
+			userID:      student.ID,
+			username:    student.Username,
+			classID:     classID,
+			className:   className,
+			hasAttempts: false,
+		}
+	}
+
 	for _, a := range attempts {
 		us, ok := userMap[a.UserID]
 		if !ok {
-			className := ""
-			classID := uint(0)
-			if a.ClassRoom.ID > 0 {
-				className = a.ClassRoom.Name
-				classID = a.ClassRoom.ID
-			}
-			us = &userScore{
-				userID:    a.UserID,
-				username:  a.User.Username,
-				classID:   classID,
-				className: className,
-			}
-			userMap[a.UserID] = us
+			continue
 		}
+		us.hasAttempts = true
 		us.attemptCount++
 		us.correctCount += a.Score
 		us.totalCount += a.Total
@@ -994,6 +1011,10 @@ func (s *AttemptService) GetLeaderboard(query dto.LeaderboardQuery, currentUserI
 	}
 
 	for _, us := range scores {
+		if !us.hasAttempts {
+			us.score = -1
+			continue
+		}
 		switch scoreType {
 		case models.LeaderboardScoreTypeHighest:
 			us.score = calculateHighestScore(us.userID, attempts)
@@ -1156,18 +1177,45 @@ func buildRankedItems(scores []*userScore, currentUserID *uint) []dto.Leaderboar
 	}
 
 	rank := 1
-	prevScore := scores[0].score
-	sameScoreCount := 0
+	prevScore := 0.0
+	rankStarted := false
+	answeredCount := 0
+
+	for _, us := range scores {
+		if us.hasAttempts {
+			answeredCount++
+		}
+	}
 
 	for i, us := range scores {
-		if i > 0 {
-			if us.score < prevScore {
-				rank = i + 1
-				prevScore = us.score
-				sameScoreCount = 0
-			} else {
-				sameScoreCount++
+		if !us.hasAttempts {
+			isCurrent := false
+			if currentUserID != nil && *currentUserID == us.userID {
+				isCurrent = true
 			}
+
+			items = append(items, dto.LeaderboardItem{
+				Rank:          answeredCount + 1,
+				UserID:        us.userID,
+				Username:      us.username,
+				ClassID:       us.classID,
+				ClassName:     us.className,
+				Score:         0,
+				ScoreDisplay:  "未答题",
+				AttemptCount:  0,
+				CorrectRate:   "—",
+				IsCurrentUser: isCurrent,
+				HasAttempted:  false,
+			})
+			continue
+		}
+
+		if i > 0 && us.score < prevScore {
+			rank = i + 1
+			prevScore = us.score
+		} else if i == 0 {
+			prevScore = us.score
+			rank = 1
 		}
 
 		correctRate := "0%"
@@ -1191,6 +1239,7 @@ func buildRankedItems(scores []*userScore, currentUserID *uint) []dto.Leaderboar
 			AttemptCount:  us.attemptCount,
 			CorrectRate:   correctRate,
 			IsCurrentUser: isCurrent,
+			HasAttempted:  true,
 		})
 	}
 

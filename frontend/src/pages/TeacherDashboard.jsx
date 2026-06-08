@@ -925,42 +925,62 @@ export function TeacherDashboard({ user, token, onLogout }) {
                 <tbody>
                   {leaderboard?.items?.length > 0 ? (
                     leaderboard.items.map((item, idx) => {
-                      const isTop3 = item.rank <= 3;
+                      const isTop3 = item.hasAttempted && item.rank <= 3;
                       const medalEmoji = item.rank === 1 ? '🥇' : item.rank === 2 ? '🥈' : item.rank === 3 ? '🥉' : null;
 
                       return (
                         <tr
                           key={`${item.userId}-${idx}`}
-                          className={isTop3 ? 'bg-amber-50/30' : ''}
+                          className={`${
+                            !item.hasAttempted ? 'bg-slate-50/50 opacity-70' : isTop3 ? 'bg-amber-50/30' : ''
+                          }`}
                         >
                           <td>
-                            {medalEmoji ? (
+                            {isTop3 && medalEmoji ? (
                               <span className="text-xl">{medalEmoji}</span>
                             ) : (
-                              <span className="font-mono text-sm text-slate-600">{item.rank}</span>
+                              <span className={`font-mono text-sm ${
+                                item.hasAttempted ? 'text-slate-600' : 'text-slate-400'
+                              }`}>{item.rank}</span>
                             )}
                           </td>
-                          <td className="font-medium text-slate-700">{item.username}</td>
+                          <td className={`font-medium ${
+                            item.hasAttempted ? 'text-slate-700' : 'text-slate-500'
+                          }`}>{item.username}</td>
                           <td className="text-xs text-slate-500">
                             {item.className || '-'}
                           </td>
                           <td>
-                            <span className="badge badge-outline badge-xs">
-                              {item.attemptCount} 次
-                            </span>
+                            {item.hasAttempted ? (
+                              <span className="badge badge-outline badge-xs">
+                                {item.attemptCount} 次
+                              </span>
+                            ) : (
+                              <span className="text-xs text-slate-400">—</span>
+                            )}
                           </td>
                           <td>
-                            <span className="badge badge-info badge-outline badge-xs">
-                              {item.correctRate}
-                            </span>
+                            {item.hasAttempted ? (
+                              <span className="badge badge-info badge-outline badge-xs">
+                                {item.correctRate}
+                              </span>
+                            ) : (
+                              <span className="text-xs text-slate-400">—</span>
+                            )}
                           </td>
                           <td>
                             <span className={`font-bold ${
-                              isTop3 ? 'text-amber-600' : 'text-slate-700'
+                              !item.hasAttempted
+                                ? 'text-slate-400'
+                                : isTop3
+                                ? 'text-amber-600'
+                                : 'text-slate-700'
                             }`}>
                               {item.scoreDisplay}
                             </span>
-                            <span className="text-xs text-slate-400 ml-1">分</span>
+                            {item.hasAttempted && (
+                              <span className="text-xs text-slate-400 ml-1">分</span>
+                            )}
                           </td>
                         </tr>
                       );

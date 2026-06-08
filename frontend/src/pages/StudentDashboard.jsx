@@ -1537,7 +1537,7 @@ export function StudentDashboard({ user, token, onLogout }) {
                   </div>
                 ) : leaderboard?.items?.length > 0 ? (
                   leaderboard.items.map((item, idx) => {
-                    const isTop3 = item.rank <= 3;
+                    const isTop3 = item.hasAttempted && item.rank <= 3;
                     const medalEmoji = item.rank === 1 ? '🥇' : item.rank === 2 ? '🥈' : item.rank === 3 ? '🥉' : null;
 
                     return (
@@ -1546,40 +1546,56 @@ export function StudentDashboard({ user, token, onLogout }) {
                         className={`flex items-center gap-3 rounded-lg px-3 py-2 transition-colors ${
                           item.isCurrentUser
                             ? 'bg-sky-100 border border-sky-300'
+                            : !item.hasAttempted
+                            ? 'bg-slate-50/50 opacity-70'
                             : isTop3
                             ? 'bg-amber-50/50'
                             : 'hover:bg-slate-50'
                         }`}
                       >
                         <div className="w-8 text-center">
-                          {medalEmoji ? (
+                          {isTop3 && medalEmoji ? (
                             <span className="text-xl">{medalEmoji}</span>
                           ) : (
-                            <span className="text-sm font-medium text-slate-500">
+                            <span className={`text-sm font-medium ${
+                              item.hasAttempted ? 'text-slate-500' : 'text-slate-400'
+                            }`}>
                               {item.rank}
                             </span>
                           )}
                         </div>
                         <div className="flex-1 min-w-0">
                           <p className={`text-sm font-medium truncate ${
-                            item.isCurrentUser ? 'text-sky-700' : 'text-slate-700'
+                            item.isCurrentUser ? 'text-sky-700' : item.hasAttempted ? 'text-slate-700' : 'text-slate-500'
                           }`}>
                             {item.username}
                             {item.isCurrentUser && (
                               <span className="ml-1 text-xs text-sky-500">（我）</span>
                             )}
                           </p>
-                          <p className="text-xs text-slate-400">
-                            答题 {item.attemptCount} 次 · 正确率 {item.correctRate}
-                          </p>
+                          {item.hasAttempted ? (
+                            <p className="text-xs text-slate-400">
+                              答题 {item.attemptCount} 次 · 正确率 {item.correctRate}
+                            </p>
+                          ) : (
+                            <p className="text-xs text-slate-400">
+                              尚未答题
+                            </p>
+                          )}
                         </div>
                         <div className="text-right">
                           <span className={`text-sm font-bold ${
-                            isTop3 ? 'text-amber-600' : 'text-slate-700'
+                            !item.hasAttempted
+                              ? 'text-slate-400'
+                              : isTop3
+                              ? 'text-amber-600'
+                              : 'text-slate-700'
                           }`}>
                             {item.scoreDisplay}
                           </span>
-                          <p className="text-xs text-slate-400">分</p>
+                          {item.hasAttempted && (
+                            <p className="text-xs text-slate-400">分</p>
+                          )}
                         </div>
                       </div>
                     );

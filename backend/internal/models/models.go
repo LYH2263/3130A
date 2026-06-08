@@ -31,6 +31,9 @@ const (
 	LeaderboardScoreTypeAverage   = "average"
 	LeaderboardScoreTypeWeighted  = "weighted"
 
+	AttemptModeNormal = "normal"
+	AttemptModeReview = "review"
+
 	DefaultLeaderboardLimit = 50
 	DefaultWeightedRecentN = 5
 )
@@ -231,6 +234,7 @@ type Attempt struct {
 	Answers      []AttemptAnswer `gorm:"foreignKey:AttemptID" json:"answers"`
 	ExamConfigID *uint           `gorm:"index" json:"examConfigId,omitempty"`
 	ExamConfig   *ExamConfig     `gorm:"foreignKey:ExamConfigID" json:"examConfig,omitempty"`
+	Mode         string          `gorm:"size:20;not null;default:'normal';index" json:"mode"`
 	StartedAt    *time.Time      `json:"startedAt,omitempty"`
 	Deadline     *time.Time      `json:"deadline,omitempty"`
 	Timeout      bool            `gorm:"not null;default:false" json:"timeout"`

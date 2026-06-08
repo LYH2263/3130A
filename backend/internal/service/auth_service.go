@@ -116,3 +116,15 @@ func (s *AuthService) GetUser(id uint) (*models.User, error) {
 	}
 	return &user, nil
 }
+
+func (s *AuthService) ListStudentsByClass(classID *uint) ([]models.User, error) {
+	var users []models.User
+	query := s.db.Where("role = ?", models.RoleStudent)
+	if classID != nil {
+		query = query.Where("class_id = ?", *classID)
+	}
+	if err := query.Preload("ClassRoom").Order("username asc").Find(&users).Error; err != nil {
+		return nil, fmt.Errorf("list students: %w", err)
+	}
+	return users, nil
+}

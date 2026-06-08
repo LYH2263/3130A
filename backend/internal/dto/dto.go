@@ -292,6 +292,7 @@ type LeaderboardItem struct {
 	AttemptCount  int     `json:"attemptCount"`
 	CorrectRate   string  `json:"correctRate"`
 	IsCurrentUser bool    `json:"isCurrentUser"`
+	HasAttempted  bool    `json:"hasAttempted"`
 }
 
 type LeaderboardResult struct {

@@ -357,6 +357,7 @@ func (s *MistakeReviewService) SubmitReview(userID uint, classID uint, req dto.S
 		Score:   totalScore,
 		Total:   totalMaxScore,
 		Answers: answersModel,
+		Mode:    models.AttemptModeReview,
 	}
 	if err := tx.Create(&attempt).Error; err != nil {
 		tx.Rollback()
