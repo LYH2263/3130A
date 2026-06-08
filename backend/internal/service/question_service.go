@@ -13,6 +13,7 @@ import (
 
 	"label3130/backend/internal/dto"
 	"label3130/backend/internal/models"
+	"label3130/backend/internal/utils"
 )
 
 type QuestionService struct {
@@ -54,6 +55,84 @@ func (s *QuestionService) GetQuestion(id uint) (*models.Question, error) {
 		return nil, fmt.Errorf("get question: %w", err)
 	}
 	return &question, nil
+}
+
+func (s *QuestionService) GetQuestionDetail(id uint) (*dto.QuestionDetail, error) {
+	q, err := s.GetQuestion(id)
+	if err != nil {
+		return nil, err
+	}
+
+	categoryName := ""
+	if q.Category != nil {
+		categoryName = q.Category.Name
+	}
+	expContent := ""
+	expRefs := ""
+	if q.Explanation != nil {
+		expContent = q.Explanation.Content
+		expRefs = q.Explanation.References
+	}
+
+	creatorName := ""
+	if q.CreatedBy > 0 {
+		var creator models.User
+		if err := s.db.Select("username").First(&creator, q.CreatedBy).Error; err == nil {
+			creatorName = creator.Username
+		}
+	}
+
+	hasError := false
+	switch q.Type {
+	case models.QuestionTypeSingle:
+		correctCount := 0
+		for _, opt := range q.Options {
+			if opt.IsCorrect {
+				correctCount++
+			}
+		}
+		hasError = correctCount != 1
+	case models.QuestionTypeMultiple:
+		correctCount := 0
+		for _, opt := range q.Options {
+			if opt.IsCorrect {
+				correctCount++
+			}
+		}
+		hasError = correctCount < 2
+	case models.QuestionTypeJudge:
+		correctCount := 0
+		for _, opt := range q.Options {
+			if opt.IsCorrect {
+				correctCount++
+			}
+		}
+		hasError = correctCount != 1 || len(q.Options) != 2
+	case models.QuestionTypeBlank:
+		hasError = len(q.BlankAnswers) < 1
+	}
+
+	return &dto.QuestionDetail{
+		ID:                 q.ID,
+		Type:               q.Type,
+		Title:              q.Title,
+		Description:        q.Description,
+		CategoryID:         q.CategoryID,
+		CategoryName:       categoryName,
+		CreatedBy:          q.CreatedBy,
+		CreatedByName:      creatorName,
+		MultipleScore:      q.MultipleScore,
+		ExplanationContent: expContent,
+		ExplanationRefs:    expRefs,
+		KnowledgePoints:    toKnowledgePointInfos(q.KnowledgePoints),
+		WrongCount:         0,
+		HasAnswerError:     hasError,
+		CreatedAt:          q.CreatedAt.Format("2006-01-02 15:04:05"),
+		UpdatedAt:          q.UpdatedAt.Format("2006-01-02 15:04:05"),
+		Options:            q.Options,
+		BlankAnswers:       q.BlankAnswers,
+		Tags:               q.Tags,
+	}, nil
 }
 
 func (s *QuestionService) QueryQuestions(query dto.QuestionQuery, categorySvc *CategoryService) (*dto.PaginatedQuestions, error) {
@@ -404,7 +483,7 @@ func (s *QuestionService) CreateQuestion(input dto.QuestionInput, createdBy uint
 		if hasExplanation {
 			explanation := models.QuestionExplanation{
 				QuestionID: question.ID,
-				Content:    strings.TrimSpace(input.ExplanationContent),
+				Content:    utils.SanitizeHTML(strings.TrimSpace(input.ExplanationContent)),
 				References: strings.TrimSpace(input.ExplanationRefs),
 			}
 			if err := tx.Create(&explanation).Error; err != nil {
@@ -541,7 +620,7 @@ func (s *QuestionService) UpdateQuestion(questionID uint, input dto.QuestionInpu
 		if hasExplanation {
 			explanation := models.QuestionExplanation{
 				QuestionID: question.ID,
-				Content:    strings.TrimSpace(input.ExplanationContent),
+				Content:    utils.SanitizeHTML(strings.TrimSpace(input.ExplanationContent)),
 				References: strings.TrimSpace(input.ExplanationRefs),
 			}
 			if err := tx.Create(&explanation).Error; err != nil {

@@ -102,17 +102,25 @@ function buildInitialState(data) {
   }
 
   const type = data.type || QUESTION_TYPES.SINGLE;
+
+  let explanationContent = data.explanationContent || '';
+  let explanationRefs = data.explanationRefs || '';
+  if (!explanationContent && !explanationRefs && data.explanation) {
+    explanationContent = data.explanation.content || '';
+    explanationRefs = data.explanation.references || '';
+  }
+
+  let knowledgePoints = data.knowledgePoints || [];
+
   return {
     type,
     title: data.title || '',
     description: data.description || '',
     categoryId: data.categoryId || null,
     tagNames: data.tags ? data.tags.map((t) => t.name) : [],
-    knowledgePointNames: data.knowledgePoints
-      ? data.knowledgePoints.map((kp) => kp.name)
-      : [],
-    explanationContent: data.explanationContent || '',
-    explanationRefs: data.explanationRefs || '',
+    knowledgePointNames: knowledgePoints.map((kp) => kp.name),
+    explanationContent,
+    explanationRefs,
     options:
       data.options?.map((item) => ({
         id: item.id,
