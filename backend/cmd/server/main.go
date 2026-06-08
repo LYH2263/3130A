@@ -38,12 +38,13 @@ func main() {
 	tagSvc := service.NewTagService(db, log)
 	knowledgePointSvc := service.NewKnowledgePointService(db, log)
 	questionSvc := service.NewQuestionService(db, log)
-	attemptSvc := service.NewAttemptService(db, log)
+	examConfigSvc := service.NewExamConfigService(db, log)
+	attemptSvc := service.NewAttemptService(db, log, questionSvc, examConfigSvc)
 	mistakeReviewSvc := service.NewMistakeReviewService(db, log)
 	favoriteSvc := service.NewFavoriteService(db, log)
 	questionSetSvc := service.NewQuestionSetService(db, log)
 
-	h := handler.New(authSvc, categorySvc, tagSvc, knowledgePointSvc, questionSvc, attemptSvc, mistakeReviewSvc, favoriteSvc, questionSetSvc, tokens, log)
+	h := handler.New(authSvc, categorySvc, tagSvc, knowledgePointSvc, questionSvc, attemptSvc, mistakeReviewSvc, favoriteSvc, questionSetSvc, examConfigSvc, tokens, log)
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,
 		Handler:           h.Router(),

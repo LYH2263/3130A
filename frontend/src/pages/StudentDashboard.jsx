@@ -679,6 +679,7 @@ export function StudentDashboard({ user, token, onLogout }) {
   const [deadline, setDeadline] = useState(null);
   const [startedAt, setStartedAt] = useState(null);
   const [allowEarlySubmit, setAllowEarlySubmit] = useState(true);
+  const [currentAttemptId, setCurrentAttemptId] = useState(null);
   const [isAutoSubmitting, setIsAutoSubmitting] = useState(false);
   const [leaderboard, setLeaderboard] = useState(null);
   const [leaderboardLoading, setLeaderboardLoading] = useState(false);
@@ -845,6 +846,7 @@ export function StudentDashboard({ user, token, onLogout }) {
         quizDeadline = result.deadline;
         quizStartedAt = result.startedAt;
         quizAllowEarlySubmit = result.allowEarlySubmit;
+        setCurrentAttemptId(result.attemptId);
         toast.success(`已生成新试卷，共${quiz.length}道题，${result.durationMinutes}分钟限时`);
       }
 
@@ -1148,6 +1150,9 @@ export function StudentDashboard({ user, token, onLogout }) {
     try {
       const answersPayload = buildAnswersPayload();
       const payload = { answers: answersPayload };
+      if (currentAttemptId) {
+        payload.attemptId = currentAttemptId;
+      }
       const result = await apiRequest('/student/submit', {
         method: 'POST',
         token,
@@ -1156,6 +1161,7 @@ export function StudentDashboard({ user, token, onLogout }) {
       setLastResult(result);
       setDeadline(null);
       setStartedAt(null);
+      setCurrentAttemptId(null);
 
       try {
         const questionIds = questions.map((q) => q.id);
@@ -1211,6 +1217,9 @@ export function StudentDashboard({ user, token, onLogout }) {
         await loadStudentData();
       } else {
         const payload = { answers: answersPayload };
+        if (currentAttemptId) {
+          payload.attemptId = currentAttemptId;
+        }
         const result = await apiRequest('/student/submit', {
           method: 'POST',
           token,
@@ -1219,6 +1228,7 @@ export function StudentDashboard({ user, token, onLogout }) {
         setLastResult(result);
         setDeadline(null);
         setStartedAt(null);
+        setCurrentAttemptId(null);
 
         if (result.timeout) {
           toast.success(`已超时提交：${result.score}/${result.total}`);

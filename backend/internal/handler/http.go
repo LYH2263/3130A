@@ -28,6 +28,7 @@ type HTTPHandler struct {
 	mistakeReviewSvc   *service.MistakeReviewService
 	favoriteSvc        *service.FavoriteService
 	questionSetSvc     *service.QuestionSetService
+	examConfigSvc      *service.ExamConfigService
 	tokens             *auth.TokenManager
 	log                *slog.Logger
 }
@@ -42,6 +43,7 @@ func New(
 	mistakeReviewSvc *service.MistakeReviewService,
 	favoriteSvc *service.FavoriteService,
 	questionSetSvc *service.QuestionSetService,
+	examConfigSvc *service.ExamConfigService,
 	tokens *auth.TokenManager,
 	log *slog.Logger,
 ) *HTTPHandler {
@@ -55,6 +57,7 @@ func New(
 		mistakeReviewSvc:   mistakeReviewSvc,
 		favoriteSvc:        favoriteSvc,
 		questionSetSvc:     questionSetSvc,
+		examConfigSvc:      examConfigSvc,
 		tokens:             tokens,
 		log:                log,
 	}
@@ -108,12 +111,19 @@ func (h *HTTPHandler) Router() *gin.Engine {
 				teacher.PUT("/questions/:id", h.updateQuestion)
 				teacher.DELETE("/questions/:id", h.deleteQuestion)
 				teacher.POST("/questions/upload", h.uploadQuestions)
+
+				teacher.GET("/exam-configs", h.listExamConfigs)
+				teacher.POST("/exam-configs", h.createExamConfig)
+				teacher.PUT("/exam-configs/:id", h.updateExamConfig)
+				teacher.DELETE("/exam-configs/:id", h.deleteExamConfig)
 			}
 
 			student := authed.Group("/student", middleware.RequireRole(models.RoleStudent))
 			{
 				student.GET("/questions", h.studentQuestions)
+				student.POST("/start-quiz", h.startQuiz)
 				student.POST("/submit", h.submit)
+				student.GET("/exam-configs", h.studentExamConfigs)
 				student.GET("/mistakes", h.studentMistakes)
 				student.GET("/attempts", h.studentAttempts)
 				student.GET("/attempts/:id", h.getAttemptDetail)
@@ -835,6 +845,15 @@ func (h *HTTPHandler) respondServiceError(c *gin.Context, err error) {
 		c.JSON(http.StatusConflict, gin.H{"message": err.Error()})
 	case errors.Is(err, service.ErrNoValidQuestions):
 		c.JSON(http.StatusBadRequest, gin.H{"message": err.Error()})
+	case errors.Is(err, service.ErrExamConfigNotFound):
+		c.JSON(http.StatusNotFound, gin.H{"message": err.Error()})
+	case errors.Is(err, service.ErrExamConfigNameEmpty),
+		errors.Is(err, service.ErrInvalidDuration):
+		c.JSON(http.StatusBadRequest, gin.H{"message": err.Error()})
+	case errors.Is(err, service.ErrEarlySubmitNotAllowed):
+		c.JSON(http.StatusForbidden, gin.H{"message": err.Error()})
+	case errors.Is(err, service.ErrDefaultExamConfigExists):
+		c.JSON(http.StatusConflict, gin.H{"message": err.Error()})
 	default:
 		h.log.Error("service error", "error", err.Error())
 		c.JSON(http.StatusInternalServerError, gin.H{"message": "internal server error"})
@@ -1149,4 +1168,126 @@ func (h *HTTPHandler) getSetQuiz(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, questions)
+}
+
+func (h *HTTPHandler) startQuiz(c *gin.Context) {
+	claims, ok := middleware.GetClaims(c)
+	if !ok || claims.ClassID == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"message": "invalid student context"})
+		return
+	}
+
+	var req dto.StartQuizRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "invalid request payload"})
+		return
+	}
+
+	result, err := h.attemptSvc.StartQuiz(claims.UserID, *claims.ClassID, req)
+	if err != nil {
+		h.respondServiceError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, result)
+}
+
+func (h *HTTPHandler) studentExamConfigs(c *gin.Context) {
+	_, ok := middleware.GetClaims(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"message": "invalid token"})
+		return
+	}
+
+	configs, err := h.examConfigSvc.List()
+	if err != nil {
+		h.log.Error("list exam configs failed", "error", err.Error())
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "failed to load exam configs"})
+		return
+	}
+	c.JSON(http.StatusOK, configs)
+}
+
+func (h *HTTPHandler) listExamConfigs(c *gin.Context) {
+	_, ok := middleware.GetClaims(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"message": "invalid token"})
+		return
+	}
+
+	configs, err := h.examConfigSvc.List()
+	if err != nil {
+		h.log.Error("list exam configs failed", "error", err.Error())
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "failed to load exam configs"})
+		return
+	}
+	c.JSON(http.StatusOK, configs)
+}
+
+func (h *HTTPHandler) createExamConfig(c *gin.Context) {
+	_, ok := middleware.GetClaims(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"message": "invalid token"})
+		return
+	}
+
+	var req dto.ExamConfigInput
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "invalid request payload"})
+		return
+	}
+
+	config, err := h.examConfigSvc.Create(req.Name, req.DurationMinutes, req.AllowEarlySubmit, req.ForceSubmitOnTimeout, req.IsDefault)
+	if err != nil {
+		h.respondServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, config)
+}
+
+func (h *HTTPHandler) updateExamConfig(c *gin.Context) {
+	_, ok := middleware.GetClaims(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"message": "invalid token"})
+		return
+	}
+
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "invalid exam config id"})
+		return
+	}
+
+	var req dto.ExamConfigInput
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "invalid request payload"})
+		return
+	}
+
+	config, err := h.examConfigSvc.Update(uint(id), req.Name, req.DurationMinutes, req.AllowEarlySubmit, req.ForceSubmitOnTimeout, req.IsDefault)
+	if err != nil {
+		h.respondServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, config)
+}
+
+func (h *HTTPHandler) deleteExamConfig(c *gin.Context) {
+	_, ok := middleware.GetClaims(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"message": "invalid token"})
+		return
+	}
+
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "invalid exam config id"})
+		return
+	}
+
+	if err := h.examConfigSvc.Delete(uint(id)); err != nil {
+		h.respondServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "exam config deleted"})
 }

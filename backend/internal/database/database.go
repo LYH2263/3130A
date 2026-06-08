@@ -47,6 +47,7 @@ func autoMigrate(db *gorm.DB, log *slog.Logger) error {
 		&models.QuestionOption{},
 		&models.BlankAnswer{},
 		&models.QuestionExplanation{},
+		&models.ExamConfig{},
 		&models.Attempt{},
 		&models.AttemptAnswer{},
 		&models.MistakeReview{},

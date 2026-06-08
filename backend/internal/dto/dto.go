@@ -114,7 +114,8 @@ type SubmitAnswerItem struct {
 }
 
 type SubmitRequest struct {
-	Answers []SubmitAnswerItem `json:"answers" binding:"required,min=1,dive"`
+	Answers   []SubmitAnswerItem `json:"answers" binding:"required,min=1,dive"`
+	AttemptID *uint              `json:"attemptId"`
 }
 
 type AnswerDetail struct {
@@ -302,4 +303,40 @@ type LeaderboardResult struct {
 	CurrentRank *LeaderboardItem  `json:"currentRank,omitempty"`
 	GapToPrev   float64           `json:"gapToPrev"`
 	HasPrev     bool              `json:"hasPrev"`
+}
+
+type StartQuizRequest struct {
+	ExamConfigID *uint  `json:"examConfigId"`
+	Limit        int    `json:"limit"`
+	Mode         string `json:"mode" binding:"omitempty,oneof=normal review"`
+}
+
+type StartQuizResponse struct {
+	Questions       []interface{} `json:"questions"`
+	AttemptID       uint          `json:"attemptId"`
+	StartedAt       string        `json:"startedAt"`
+	Deadline        string        `json:"deadline"`
+	ExamConfigID    uint          `json:"examConfigId"`
+	AllowEarlySubmit bool         `json:"allowEarlySubmit"`
+	DurationMinutes int           `json:"durationMinutes"`
+}
+
+type ExamConfigInput struct {
+	Name                 string `json:"name" binding:"required,min=1,max=128"`
+	DurationMinutes      int    `json:"durationMinutes" binding:"required,min=1"`
+	AllowEarlySubmit     bool   `json:"allowEarlySubmit"`
+	ForceSubmitOnTimeout bool   `json:"forceSubmitOnTimeout"`
+	IsDefault            bool   `json:"isDefault"`
+}
+
+type SubmitResultDTO struct {
+	AttemptID    uint           `json:"attemptId"`
+	Score        int            `json:"score"`
+	Total        int            `json:"total"`
+	Rate         string         `json:"rate"`
+	Details      []AnswerDetail `json:"details"`
+	SkippedCount int            `json:"skippedCount"`
+	Timeout      bool           `json:"timeout"`
+	StartedAt    string         `json:"startedAt,omitempty"`
+	Deadline     string         `json:"deadline,omitempty"`
 }

@@ -221,16 +221,22 @@ type BlankAnswer struct {
 }
 
 type Attempt struct {
-	ID        uint            `gorm:"primaryKey" json:"id"`
-	UserID    uint            `gorm:"index;not null" json:"userId"`
-	User      User            `gorm:"foreignKey:UserID" json:"user"`
-	ClassID   uint            `gorm:"index;not null" json:"classId"`
-	ClassRoom ClassRoom       `gorm:"foreignKey:ClassID" json:"classRoom"`
-	Score     int             `gorm:"not null" json:"score"`
-	Total     int             `gorm:"not null" json:"total"`
-	Answers   []AttemptAnswer `gorm:"foreignKey:AttemptID" json:"answers"`
-	CreatedAt time.Time       `json:"createdAt"`
-	UpdatedAt time.Time       `json:"updatedAt"`
+	ID           uint            `gorm:"primaryKey" json:"id"`
+	UserID       uint            `gorm:"index;not null" json:"userId"`
+	User         User            `gorm:"foreignKey:UserID" json:"user"`
+	ClassID      uint            `gorm:"index;not null" json:"classId"`
+	ClassRoom    ClassRoom       `gorm:"foreignKey:ClassID" json:"classRoom"`
+	Score        int             `gorm:"not null" json:"score"`
+	Total        int             `gorm:"not null" json:"total"`
+	Answers      []AttemptAnswer `gorm:"foreignKey:AttemptID" json:"answers"`
+	ExamConfigID *uint           `gorm:"index" json:"examConfigId,omitempty"`
+	ExamConfig   *ExamConfig     `gorm:"foreignKey:ExamConfigID" json:"examConfig,omitempty"`
+	StartedAt    *time.Time      `json:"startedAt,omitempty"`
+	Deadline     *time.Time      `json:"deadline,omitempty"`
+	Timeout      bool            `gorm:"not null;default:false" json:"timeout"`
+	Status       string          `gorm:"size:20;not null;default:'completed';index" json:"status"`
+	CreatedAt    time.Time       `json:"createdAt"`
+	UpdatedAt    time.Time       `json:"updatedAt"`
 }
 
 type AttemptAnswer struct {
@@ -279,6 +285,9 @@ const (
 	QuizModeReview = "review"
 	QuizModeFavorite = "favorite"
 	QuizModeSet = "set"
+
+	AttemptStatusInProgress = "in_progress"
+	AttemptStatusCompleted  = "completed"
 )
 
 type Favorite struct {
@@ -299,4 +308,15 @@ type QuestionSet struct {
 	QuestionCount int       `gorm:"-" json:"questionCount"`
 	CreatedAt     time.Time `json:"createdAt"`
 	UpdatedAt     time.Time `json:"updatedAt"`
+}
+
+type ExamConfig struct {
+	ID                uint      `gorm:"primaryKey" json:"id"`
+	Name              string    `gorm:"size:128;not null" json:"name"`
+	DurationMinutes   int       `gorm:"not null;default:30" json:"durationMinutes"`
+	AllowEarlySubmit  bool      `gorm:"not null;default:true" json:"allowEarlySubmit"`
+	ForceSubmitOnTimeout bool   `gorm:"not null;default:false" json:"forceSubmitOnTimeout"`
+	IsDefault         bool      `gorm:"not null;default:false;index" json:"isDefault"`
+	CreatedAt         time.Time `json:"createdAt"`
+	UpdatedAt         time.Time `json:"updatedAt"`
 }

@@ -18,8 +18,10 @@ import (
 )
 
 type AttemptService struct {
-	db  *gorm.DB
-	log *slog.Logger
+	db             *gorm.DB
+	log            *slog.Logger
+	questionSvc    *QuestionService
+	examConfigSvc  *ExamConfigService
 }
 
 type SubmitResult struct {
@@ -29,6 +31,9 @@ type SubmitResult struct {
 	Rate         string           `json:"rate"`
 	Details      []dto.AnswerDetail `json:"details"`
 	SkippedCount int              `json:"skippedCount"`
+	Timeout      bool             `json:"timeout"`
+	StartedAt    string           `json:"startedAt,omitempty"`
+	Deadline     string           `json:"deadline,omitempty"`
 }
 
 type StudentMistake struct {
@@ -64,8 +69,77 @@ type Overview struct {
 	AttemptCount  int64 `json:"attemptCount"`
 }
 
-func NewAttemptService(db *gorm.DB, log *slog.Logger) *AttemptService {
-	return &AttemptService{db: db, log: log}
+func NewAttemptService(db *gorm.DB, log *slog.Logger, questionSvc *QuestionService, examConfigSvc *ExamConfigService) *AttemptService {
+	return &AttemptService{
+		db:            db,
+		log:           log,
+		questionSvc:   questionSvc,
+		examConfigSvc: examConfigSvc,
+	}
+}
+
+func (s *AttemptService) StartQuiz(userID uint, classID uint, req dto.StartQuizRequest) (*dto.StartQuizResponse, error) {
+	if s.questionSvc == nil || s.examConfigSvc == nil {
+		return nil, fmt.Errorf("quiz service not properly initialized")
+	}
+
+	limit := req.Limit
+	if limit <= 0 {
+		limit = 10
+	}
+
+	var examConfig *models.ExamConfig
+	var err error
+	if req.ExamConfigID != nil && *req.ExamConfigID > 0 {
+		examConfig, err = s.examConfigSvc.GetByID(*req.ExamConfigID)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		examConfig, err = s.examConfigSvc.GetOrCreateDefault()
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	questions, err := s.questionSvc.GetQuizQuestions(limit)
+	if err != nil {
+		return nil, err
+	}
+
+	now := time.Now()
+	deadline := now.Add(time.Duration(examConfig.DurationMinutes) * time.Minute)
+
+	attempt := models.Attempt{
+		UserID:       userID,
+		ClassID:      classID,
+		Score:        0,
+		Total:        0,
+		ExamConfigID: &examConfig.ID,
+		ExamConfig:   examConfig,
+		StartedAt:    &now,
+		Deadline:     &deadline,
+		Timeout:      false,
+		Status:       models.AttemptStatusInProgress,
+	}
+	if err := s.db.Create(&attempt).Error; err != nil {
+		return nil, fmt.Errorf("create attempt: %w", err)
+	}
+
+	questionList := make([]interface{}, len(questions))
+	for i, q := range questions {
+		questionList[i] = q
+	}
+
+	return &dto.StartQuizResponse{
+		Questions:        questionList,
+		AttemptID:        attempt.ID,
+		StartedAt:        now.Format(time.RFC3339),
+		Deadline:         deadline.Format(time.RFC3339),
+		ExamConfigID:     examConfig.ID,
+		AllowEarlySubmit: examConfig.AllowEarlySubmit,
+		DurationMinutes:  examConfig.DurationMinutes,
+	}, nil
 }
 
 func (s *AttemptService) Submit(userID uint, classID uint, req dto.SubmitRequest) (*SubmitResult, error) {
@@ -164,28 +238,91 @@ func (s *AttemptService) Submit(userID uint, classID uint, req dto.SubmitRequest
 		return nil, ErrNoValidQuestions
 	}
 
-	attempt := models.Attempt{
-		UserID:  userID,
-		ClassID: classID,
-		Score:   totalScore,
-		Total:   totalMaxScore,
-		Answers: answersModel,
-	}
-	if err := s.db.Create(&attempt).Error; err != nil {
-		return nil, fmt.Errorf("save attempt: %w", err)
+	var attempt *models.Attempt
+	var timeout bool
+	var startedAt *time.Time
+	var deadline *time.Time
+
+	now := time.Now()
+
+	if req.AttemptID != nil && *req.AttemptID > 0 {
+		var existing models.Attempt
+		if err := s.db.Where("id = ? AND user_id = ? AND status = ?", *req.AttemptID, userID, models.AttemptStatusInProgress).
+			First(&existing).Error; err != nil {
+			if err == gorm.ErrRecordNotFound {
+				return nil, ErrAttemptNotFound
+			}
+			return nil, fmt.Errorf("find attempt: %w", err)
+		}
+		attempt = &existing
+
+		if attempt.Deadline != nil {
+			timeout = now.After(*attempt.Deadline)
+		}
+		startedAt = attempt.StartedAt
+		deadline = attempt.Deadline
+
+		if !timeout && attempt.ExamConfigID != nil && s.examConfigSvc != nil {
+			if config, err := s.examConfigSvc.GetByID(*attempt.ExamConfigID); err == nil {
+				if !config.AllowEarlySubmit {
+					return nil, ErrEarlySubmitNotAllowed
+				}
+			}
+		}
+
+		attempt.Score = totalScore
+		attempt.Total = totalMaxScore
+		attempt.Timeout = timeout
+		attempt.Status = models.AttemptStatusCompleted
+
+		if err := s.db.Save(attempt).Error; err != nil {
+			return nil, fmt.Errorf("update attempt: %w", err)
+		}
+
+		if err := s.db.Where("attempt_id = ?", attempt.ID).Delete(&models.AttemptAnswer{}).Error; err != nil {
+			return nil, fmt.Errorf("clear old answers: %w", err)
+		}
+		for i := range answersModel {
+			answersModel[i].AttemptID = attempt.ID
+		}
+		if err := s.db.Create(&answersModel).Error; err != nil {
+			return nil, fmt.Errorf("save answers: %w", err)
+		}
+	} else {
+		newAttempt := models.Attempt{
+			UserID:  userID,
+			ClassID: classID,
+			Score:   totalScore,
+			Total:   totalMaxScore,
+			Answers: answersModel,
+			Status:  models.AttemptStatusCompleted,
+		}
+		if err := s.db.Create(&newAttempt).Error; err != nil {
+			return nil, fmt.Errorf("save attempt: %w", err)
+		}
+		attempt = &newAttempt
 	}
 
 	rate := fmt.Sprintf("%.0f%%", (float64(totalScore)/float64(totalMaxScore))*100)
-	s.log.Info("attempt submitted", "attemptID", attempt.ID, "userID", userID, "score", totalScore, "total", totalMaxScore, "skipped", skippedCount)
+	s.log.Info("attempt submitted", "attemptID", attempt.ID, "userID", userID, "score", totalScore, "total", totalMaxScore, "skipped", skippedCount, "timeout", timeout)
 
-	return &SubmitResult{
+	result := &SubmitResult{
 		AttemptID:    attempt.ID,
 		Score:        totalScore,
 		Total:        totalMaxScore,
 		Rate:         rate,
 		Details:      details,
 		SkippedCount: skippedCount,
-	}, nil
+		Timeout:      timeout,
+	}
+	if startedAt != nil {
+		result.StartedAt = startedAt.Format(time.RFC3339)
+	}
+	if deadline != nil {
+		result.Deadline = deadline.Format(time.RFC3339)
+	}
+
+	return result, nil
 }
 
 func gradeQuestion(question models.Question, answer dto.SubmitAnswerItem) (int, int, string) {

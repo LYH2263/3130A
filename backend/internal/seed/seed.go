@@ -28,6 +28,9 @@ func Run(db *gorm.DB, log *slog.Logger) error {
 	if err := seedQuestions(db); err != nil {
 		return err
 	}
+	if err := seedExamConfigs(db); err != nil {
+		return err
+	}
 
 	log.Info("seed completed")
 	return nil
@@ -195,6 +198,47 @@ func seedQuestions(db *gorm.DB) error {
 	for _, item := range templates {
 		if err := db.Create(&item).Error; err != nil {
 			return fmt.Errorf("seed question: %w", err)
+		}
+	}
+	return nil
+}
+
+func seedExamConfigs(db *gorm.DB) error {
+	var count int64
+	if err := db.Model(&models.ExamConfig{}).Count(&count).Error; err != nil {
+		return fmt.Errorf("count exam configs: %w", err)
+	}
+	if count > 0 {
+		return nil
+	}
+
+	configs := []models.ExamConfig{
+		{
+			Name:                 "标准测试",
+			DurationMinutes:      30,
+			AllowEarlySubmit:     true,
+			ForceSubmitOnTimeout: false,
+			IsDefault:            true,
+		},
+		{
+			Name:                 "快速练习",
+			DurationMinutes:      10,
+			AllowEarlySubmit:     true,
+			ForceSubmitOnTimeout: false,
+			IsDefault:            false,
+		},
+		{
+			Name:                 "限时挑战",
+			DurationMinutes:      5,
+			AllowEarlySubmit:     true,
+			ForceSubmitOnTimeout: false,
+			IsDefault:            false,
+		},
+	}
+
+	for _, config := range configs {
+		if err := db.Create(&config).Error; err != nil {
+			return fmt.Errorf("seed exam config %s: %w", config.Name, err)
 		}
 	}
 	return nil
