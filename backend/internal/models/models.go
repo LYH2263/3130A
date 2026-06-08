@@ -74,13 +74,14 @@ type User struct {
 }
 
 type Category struct {
-	ID        uint       `gorm:"primaryKey" json:"id"`
-	ParentID  *uint      `gorm:"index" json:"parentId"`
-	Name      string     `gorm:"size:128;not null" json:"name"`
-	Sort      int        `gorm:"not null;default:0" json:"sort"`
-	Children  []Category `gorm:"foreignKey:ParentID" json:"children,omitempty"`
-	CreatedAt time.Time  `json:"createdAt"`
-	UpdatedAt time.Time  `json:"updatedAt"`
+	ID            uint       `gorm:"primaryKey" json:"id"`
+	ParentID      *uint      `gorm:"index" json:"parentId"`
+	Name          string     `gorm:"size:128;not null" json:"name"`
+	Sort          int        `gorm:"not null;default:0" json:"sort"`
+	Children      []Category `gorm:"foreignKey:ParentID" json:"children,omitempty"`
+	QuestionCount int        `gorm:"-" json:"questionCount"`
+	CreatedAt     time.Time  `json:"createdAt"`
+	UpdatedAt     time.Time  `json:"updatedAt"`
 }
 
 type Tag struct {

@@ -129,9 +129,43 @@ function buildInitialState(data) {
   };
 }
 
+function flattenTree(categories, depth = 0, result = []) {
+  for (const cat of categories) {
+    result.push({ ...cat, depth });
+    if (cat.children && cat.children.length > 0) {
+      flattenTree(cat.children, depth + 1, result);
+    }
+  }
+  return result;
+}
+
+function filterTree(categories, keyword) {
+  const kw = keyword.trim().toLowerCase();
+  if (!kw) {
+    return categories;
+  }
+
+  function walk(nodes) {
+    const result = [];
+    for (const node of nodes) {
+      const children = node.children ? walk(node.children) : [];
+      const matchSelf = node.name.toLowerCase().includes(kw);
+      if (matchSelf || children.length > 0) {
+        result.push({ ...node, children: children });
+      }
+    }
+    return result;
+  }
+
+  return walk(categories);
+}
+
 function CategorySelect({ categories, value, onChange }) {
   const [isOpen, setIsOpen] = useState(false);
+  const [keyword, setKeyword] = useState('');
+  const [expandedIds, setExpandedIds] = useState([]);
   const dropdownRef = useRef(null);
+  const inputRef = useRef(null);
 
   useEffect(() => {
     function handleClickOutside(e) {
@@ -143,7 +177,71 @@ function CategorySelect({ categories, value, onChange }) {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const selectedCategory = categories.find((c) => c.id === value);
+  useEffect(() => {
+    if (isOpen && inputRef.current) {
+      setTimeout(() => inputRef.current?.focus(), 50);
+    }
+    if (!isOpen) {
+      setKeyword('');
+    }
+  }, [isOpen]);
+
+  const flatList = flattenTree(categories);
+  const selectedCategory = flatList.find((c) => c.id === value);
+  const filteredTree = filterTree(categories, keyword);
+
+  const toggleExpand = (id, e) => {
+    e.stopPropagation();
+    setExpandedIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
+  };
+
+  const handleSelect = (id) => {
+    onChange(id);
+    setIsOpen(false);
+  };
+
+  const renderTree = (nodes, depth = 0) => {
+    return nodes.map((node) => {
+      const hasChildren = node.children && node.children.length > 0;
+      const isExpanded = expandedIds.includes(node.id) || !!keyword;
+      return (
+        <div key={node.id}>
+          <div
+            className={`flex cursor-pointer items-center gap-1 px-3 py-1.5 text-sm hover:bg-slate-100 ${
+              value === node.id ? 'bg-sky-50 text-sky-700 font-medium' : 'text-slate-700'
+            }`}
+            style={{ paddingLeft: `${12 + depth * 16}px` }}
+            onClick={() => handleSelect(node.id)}
+          >
+            {hasChildren ? (
+              <button
+                type="button"
+                className="flex h-4 w-4 flex-shrink-0 items-center justify-center text-slate-400 hover:text-slate-600"
+                onClick={(e) => toggleExpand(node.id, e)}
+              >
+                <svg
+                  className={`h-3 w-3 transition-transform ${isExpanded ? 'rotate-90' : ''}`}
+                  viewBox="0 0 12 12"
+                  fill="currentColor"
+                >
+                  <path d="M4 2l4 4-4 4V2z" />
+                </svg>
+              </button>
+            ) : (
+              <span className="w-4 flex-shrink-0" />
+            )}
+            <span className="flex-1 truncate">{node.name}</span>
+            <span className="text-xs text-slate-400 flex-shrink-0">
+              {node.questionCount ?? 0}题
+            </span>
+          </div>
+          {hasChildren && isExpanded && renderTree(node.children, depth + 1)}
+        </div>
+      );
+    });
+  };
 
   return (
     <div className="form-control">
@@ -157,34 +255,38 @@ function CategorySelect({ categories, value, onChange }) {
           {selectedCategory ? selectedCategory.name : '请选择分类'}
         </button>
         {isOpen && (
-          <div className="absolute z-10 mt-1 max-h-64 w-full overflow-auto rounded-lg border border-slate-200 bg-white shadow-lg">
-            <button
-              type="button"
-              className={`w-full px-3 py-2 text-left text-sm hover:bg-slate-100 ${
-                !value ? 'bg-sky-50 text-sky-700' : 'text-slate-700'
-              }`}
-              onClick={() => {
-                onChange(null);
-                setIsOpen(false);
-              }}
-            >
-              不分类
-            </button>
-            {categories.map((cat) => (
+          <div className="absolute z-10 mt-1 w-full overflow-hidden rounded-lg border border-slate-200 bg-white shadow-lg">
+            <div className="border-b border-slate-200 p-2">
+              <input
+                ref={inputRef}
+                type="text"
+                className="input input-sm input-bordered w-full"
+                placeholder="搜索分类..."
+                value={keyword}
+                onChange={(e) => setKeyword(e.target.value)}
+              />
+            </div>
+            <div className="max-h-56 overflow-auto">
               <button
-                key={cat.id}
                 type="button"
                 className={`w-full px-3 py-2 text-left text-sm hover:bg-slate-100 ${
-                  value === cat.id ? 'bg-sky-50 text-sky-700' : 'text-slate-700'
+                  !value ? 'bg-sky-50 text-sky-700' : 'text-slate-700'
                 }`}
                 onClick={() => {
-                  onChange(cat.id);
+                  onChange(null);
                   setIsOpen(false);
                 }}
               >
-                {cat.name}
+                不分类
               </button>
-            ))}
+              {filteredTree.length > 0 ? (
+                renderTree(filteredTree)
+              ) : (
+                <div className="px-3 py-4 text-center text-sm text-slate-400">
+                  无匹配分类
+                </div>
+              )}
+            </div>
           </div>
         )}
       </div>

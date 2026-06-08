@@ -24,7 +24,40 @@ func (s *CategoryService) ListTree() ([]models.Category, error) {
 	if err := s.db.Order("sort asc, id asc").Find(&allCategories).Error; err != nil {
 		return nil, fmt.Errorf("list categories: %w", err)
 	}
-	return buildTree(allCategories, nil), nil
+
+	type catCount struct {
+		CategoryID uint
+		Count      int64
+	}
+	var counts []catCount
+	if err := s.db.Model(&models.Question{}).
+		Select("category_id as category_id, count(*) as count").
+		Where("category_id IS NOT NULL").
+		Group("category_id").
+		Scan(&counts).Error; err != nil {
+		return nil, fmt.Errorf("count category questions: %w", err)
+	}
+
+	countMap := make(map[uint]int64)
+	for _, c := range counts {
+		countMap[c.CategoryID] = c.Count
+	}
+
+	tree := buildTree(allCategories, nil)
+	fillQuestionCount(tree, countMap)
+
+	return tree, nil
+}
+
+func fillQuestionCount(categories []models.Category, countMap map[uint]int64) int64 {
+	var total int64
+	for i := range categories {
+		directCount := countMap[categories[i].ID]
+		childCount := fillQuestionCount(categories[i].Children, countMap)
+		categories[i].QuestionCount = int(directCount + childCount)
+		total += directCount + childCount
+	}
+	return total
 }
 
 func buildTree(categories []models.Category, parentID *uint) []models.Category {

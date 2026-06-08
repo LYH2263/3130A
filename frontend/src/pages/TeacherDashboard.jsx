@@ -51,6 +51,9 @@ function CategoryTreeNode({ category, selectedId, onSelect, onToggle, expandedId
         <span className="flex-1 truncate" onClick={() => onSelect(category.id)}>
           {category.name}
         </span>
+        <span className="text-xs text-slate-400 flex-shrink-0">
+          {category.questionCount ?? 0}
+        </span>
       </div>
       {hasChildren && isExpanded && (
         <div className="ml-4 border-l border-slate-200 pl-2">
@@ -1008,7 +1011,7 @@ export function TeacherDashboard({ user, token, onLogout }) {
       <QuestionEditorModal
         open={modalOpen}
         initialData={editingQuestion}
-        categories={flattenCategories(categories)}
+        categories={categories}
         tags={tags}
         knowledgePoints={knowledgePoints}
         token={token}
