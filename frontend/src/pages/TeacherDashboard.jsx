@@ -98,21 +98,61 @@ export function TeacherDashboard({ user, token, onLogout }) {
   const [categories, setCategories] = useState([]);
   const [tags, setTags] = useState([]);
   const [knowledgePoints, setKnowledgePoints] = useState([]);
+  const getInitialFilterState = () => {
+    if (typeof window === 'undefined') {
+      return {
+        selectedCategoryId: null,
+        selectedTagIds: [],
+        tagMode: 'or',
+        keyword: '',
+        page: 1,
+        pageSize: 20,
+        sortBy: 'id',
+        sortOrder: 'desc',
+        createdFrom: '',
+        createdTo: '',
+        hasAnswerError: '',
+        createdBy: '',
+        showAdvancedFilter: false,
+      };
+    }
+    const params = new URLSearchParams(window.location.search);
+    return {
+      selectedCategoryId: params.get('categoryId') ? Number(params.get('categoryId')) : null,
+      selectedTagIds: params.get('tagIds')
+        ? params.get('tagIds').split(',').map(Number).filter(Boolean)
+        : [],
+      tagMode: params.get('tagMode') || 'or',
+      keyword: params.get('keyword') || '',
+      page: params.get('page') ? Number(params.get('page')) : 1,
+      pageSize: params.get('pageSize') ? Number(params.get('pageSize')) : 20,
+      sortBy: params.get('sortBy') || 'id',
+      sortOrder: params.get('sortOrder') || 'desc',
+      createdFrom: params.get('createdFrom') || '',
+      createdTo: params.get('createdTo') || '',
+      hasAnswerError: params.get('hasAnswerError') || '',
+      createdBy: params.get('createdBy') || '',
+      showAdvancedFilter: params.get('advanced') === '1',
+    };
+  };
+
+  const initialState = getInitialFilterState();
+
   const [expandedCategoryIds, setExpandedCategoryIds] = useState([]);
-  const [selectedCategoryId, setSelectedCategoryId] = useState(null);
-  const [selectedTagIds, setSelectedTagIds] = useState([]);
-  const [tagMode, setTagMode] = useState('or');
-  const [keyword, setKeyword] = useState('');
-  const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(20);
+  const [selectedCategoryId, setSelectedCategoryId] = useState(initialState.selectedCategoryId);
+  const [selectedTagIds, setSelectedTagIds] = useState(initialState.selectedTagIds);
+  const [tagMode, setTagMode] = useState(initialState.tagMode);
+  const [keyword, setKeyword] = useState(initialState.keyword);
+  const [page, setPage] = useState(initialState.page);
+  const [pageSize, setPageSize] = useState(initialState.pageSize);
   const [questionsLoading, setQuestionsLoading] = useState(false);
-  const [showAdvancedFilter, setShowAdvancedFilter] = useState(false);
-  const [createdFrom, setCreatedFrom] = useState('');
-  const [createdTo, setCreatedTo] = useState('');
-  const [sortBy, setSortBy] = useState('id');
-  const [sortOrder, setSortOrder] = useState('desc');
-  const [hasAnswerError, setHasAnswerError] = useState('');
-  const [createdBy, setCreatedBy] = useState('');
+  const [showAdvancedFilter, setShowAdvancedFilter] = useState(initialState.showAdvancedFilter);
+  const [createdFrom, setCreatedFrom] = useState(initialState.createdFrom);
+  const [createdTo, setCreatedTo] = useState(initialState.createdTo);
+  const [sortBy, setSortBy] = useState(initialState.sortBy);
+  const [sortOrder, setSortOrder] = useState(initialState.sortOrder);
+  const [hasAnswerError, setHasAnswerError] = useState(initialState.hasAnswerError);
+  const [createdBy, setCreatedBy] = useState(initialState.createdBy);
   const tableContainerRef = useRef(null);
   const scrollPositionRef = useRef(0);
 
@@ -126,6 +166,29 @@ export function TeacherDashboard({ user, token, onLogout }) {
   const [leaderboardWeightedN, setLeaderboardWeightedN] = useState(5);
 
   const topStats = useMemo(() => stats.slice(0, 12), [stats]);
+
+  const syncToURL = () => {
+    const params = new URLSearchParams();
+    if (keyword) params.set('keyword', keyword);
+    if (selectedCategoryId) params.set('categoryId', String(selectedCategoryId));
+    if (selectedTagIds.length > 0) params.set('tagIds', selectedTagIds.join(','));
+    if (tagMode !== 'or') params.set('tagMode', tagMode);
+    if (page !== 1) params.set('page', String(page));
+    if (pageSize !== 20) params.set('pageSize', String(pageSize));
+    if (sortBy !== 'id') params.set('sortBy', sortBy);
+    if (sortOrder !== 'desc') params.set('sortOrder', sortOrder);
+    if (createdFrom) params.set('createdFrom', createdFrom);
+    if (createdTo) params.set('createdTo', createdTo);
+    if (hasAnswerError) params.set('hasAnswerError', hasAnswerError);
+    if (createdBy) params.set('createdBy', createdBy);
+    if (showAdvancedFilter) params.set('advanced', '1');
+
+    const queryString = params.toString();
+    const newURL = queryString
+      ? `${window.location.pathname}?${queryString}`
+      : window.location.pathname;
+    window.history.replaceState(null, '', newURL);
+  };
 
   const loadDashboard = async () => {
     setLoading(true);
@@ -229,6 +292,25 @@ export function TeacherDashboard({ user, token, onLogout }) {
       });
     }
   };
+
+  useEffect(() => {
+    syncToURL();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    keyword,
+    selectedCategoryId,
+    selectedTagIds,
+    tagMode,
+    page,
+    pageSize,
+    sortBy,
+    sortOrder,
+    createdFrom,
+    createdTo,
+    hasAnswerError,
+    createdBy,
+    showAdvancedFilter,
+  ]);
 
   useEffect(() => {
     loadDashboard();
@@ -463,13 +545,16 @@ export function TeacherDashboard({ user, token, onLogout }) {
                     setKeyword('');
                     setSelectedTagIds([]);
                     setSelectedCategoryId(null);
+                    setTagMode('or');
                     setCreatedFrom('');
                     setCreatedTo('');
                     setHasAnswerError('');
                     setCreatedBy('');
                     setSortBy('id');
                     setSortOrder('desc');
+                    setShowAdvancedFilter(false);
                     setPage(1);
+                    setPageSize(20);
                   }}
                 >
                   重置

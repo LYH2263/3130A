@@ -139,8 +139,8 @@ func (s *QuestionService) QueryQuestions(query dto.QuestionQuery, categorySvc *C
 	db := s.db.Model(&models.Question{})
 
 	if query.Keyword != "" {
-		keyword := "%" + strings.ReplaceAll(query.Keyword, "%", "\\%") + "%"
-		db = db.Where("questions.title LIKE ? OR questions.description LIKE ?", keyword, keyword)
+		keyword := "%" + escapeLike(query.Keyword) + "%"
+		db = db.Where("questions.title LIKE ? ESCAPE '\\' OR questions.description LIKE ? ESCAPE '\\'", keyword, keyword)
 	}
 
 	if query.CategoryID != nil {
@@ -945,4 +945,11 @@ func (s *QuestionService) BatchGetExplanationsForStudent(questionIDs []uint, use
 	}
 
 	return result, nil
+}
+
+func escapeLike(s string) string {
+	s = strings.ReplaceAll(s, "\\", "\\\\")
+	s = strings.ReplaceAll(s, "%", "\\%")
+	s = strings.ReplaceAll(s, "_", "\\_")
+	return s
 }
