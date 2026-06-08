@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"gorm.io/gorm"
 
@@ -22,11 +23,12 @@ type AttemptService struct {
 }
 
 type SubmitResult struct {
-	AttemptID uint             `json:"attemptId"`
-	Score     int              `json:"score"`
-	Total     int              `json:"total"`
-	Rate      string           `json:"rate"`
-	Details   []dto.AnswerDetail `json:"details"`
+	AttemptID    uint             `json:"attemptId"`
+	Score        int              `json:"score"`
+	Total        int              `json:"total"`
+	Rate         string           `json:"rate"`
+	Details      []dto.AnswerDetail `json:"details"`
+	SkippedCount int              `json:"skippedCount"`
 }
 
 type StudentMistake struct {
@@ -76,9 +78,6 @@ func (s *AttemptService) Submit(userID uint, classID uint, req dto.SubmitRequest
 	if err := s.db.Preload("Options").Preload("BlankAnswers").Where("id IN ?", questionIDs).Find(&questions).Error; err != nil {
 		return nil, fmt.Errorf("load questions: %w", err)
 	}
-	if len(questions) == 0 {
-		return nil, ErrNoQuestions
-	}
 
 	questionMap := make(map[uint]models.Question, len(questions))
 	for _, q := range questions {
@@ -94,11 +93,13 @@ func (s *AttemptService) Submit(userID uint, classID uint, req dto.SubmitRequest
 	details := make([]dto.AnswerDetail, 0, len(req.Answers))
 	totalScore := 0
 	totalMaxScore := 0
+	skippedCount := 0
 
 	for _, answer := range req.Answers {
 		question, ok := questionMap[answer.QuestionID]
 		if !ok {
-			return nil, ErrInvalidSubmission
+			skippedCount++
+			continue
 		}
 
 		score, maxScore, status := gradeQuestion(question, answer)
@@ -135,6 +136,10 @@ func (s *AttemptService) Submit(userID uint, classID uint, req dto.SubmitRequest
 		})
 	}
 
+	if len(answersModel) == 0 {
+		return nil, ErrNoValidQuestions
+	}
+
 	attempt := models.Attempt{
 		UserID:  userID,
 		ClassID: classID,
@@ -147,14 +152,15 @@ func (s *AttemptService) Submit(userID uint, classID uint, req dto.SubmitRequest
 	}
 
 	rate := fmt.Sprintf("%.0f%%", (float64(totalScore)/float64(totalMaxScore))*100)
-	s.log.Info("attempt submitted", "attemptID", attempt.ID, "userID", userID, "score", totalScore, "total", totalMaxScore)
+	s.log.Info("attempt submitted", "attemptID", attempt.ID, "userID", userID, "score", totalScore, "total", totalMaxScore, "skipped", skippedCount)
 
 	return &SubmitResult{
-		AttemptID: attempt.ID,
-		Score:     totalScore,
-		Total:     totalMaxScore,
-		Rate:      rate,
-		Details:   details,
+		AttemptID:    attempt.ID,
+		Score:        totalScore,
+		Total:        totalMaxScore,
+		Rate:         rate,
+		Details:      details,
+		SkippedCount: skippedCount,
 	}, nil
 }
 
@@ -539,42 +545,53 @@ func IsNotFound(err error) bool {
 	return errors.Is(err, gorm.ErrRecordNotFound)
 }
 
-func (s *AttemptService) SaveDraft(userID uint, req dto.SaveDraftRequest) error {
+func (s *AttemptService) SaveDraft(userID uint, req dto.SaveDraftRequest) (string, error) {
 	questionsJSON, err := json.Marshal(req.Questions)
 	if err != nil {
-		return fmt.Errorf("marshal questions: %w", err)
+		return "", fmt.Errorf("marshal questions: %w", err)
 	}
 	answersJSON, err := json.Marshal(req.Answers)
 	if err != nil {
-		return fmt.Errorf("marshal answers: %w", err)
+		return "", fmt.Errorf("marshal answers: %w", err)
 	}
 
 	var draft models.AttemptDraft
 	err = s.db.Where("user_id = ? AND quiz_mode = ?", userID, req.QuizMode).First(&draft).Error
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-		return fmt.Errorf("find draft: %w", err)
+		return "", fmt.Errorf("find draft: %w", err)
 	}
 
+	if draft.ID > 0 && req.LastUpdated != "" && !req.Force {
+		clientTime, parseErr := time.ParseInLocation("2006-01-02 15:04:05", req.LastUpdated, time.Local)
+		if parseErr == nil && draft.UpdatedAt.After(clientTime.Add(time.Second)) {
+			return "", ErrDraftConflict
+		}
+	}
+
+	now := time.Now()
 	if draft.ID == 0 {
 		draft = models.AttemptDraft{
 			UserID:       userID,
 			QuizMode:     req.QuizMode,
 			QuestionData: string(questionsJSON),
 			AnswerData:   string(answersJSON),
+			CreatedAt:    now,
+			UpdatedAt:    now,
 		}
 		if err := s.db.Create(&draft).Error; err != nil {
-			return fmt.Errorf("create draft: %w", err)
+			return "", fmt.Errorf("create draft: %w", err)
 		}
 	} else {
 		draft.QuestionData = string(questionsJSON)
 		draft.AnswerData = string(answersJSON)
+		draft.UpdatedAt = now
 		if err := s.db.Save(&draft).Error; err != nil {
-			return fmt.Errorf("update draft: %w", err)
+			return "", fmt.Errorf("update draft: %w", err)
 		}
 	}
 
 	s.log.Info("draft saved", "userID", userID, "quizMode", req.QuizMode)
-	return nil
+	return now.Format("2006-01-02 15:04:05"), nil
 }
 
 func (s *AttemptService) GetDraft(userID uint, quizMode string) (*dto.DraftResponse, error) {

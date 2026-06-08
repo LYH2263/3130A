@@ -33,4 +33,6 @@ var (
 	ErrDraftNotFound           = errors.New("draft not found")
 	ErrAttemptNotFound         = errors.New("attempt not found")
 	ErrAttemptForbidden        = errors.New("forbidden to view this attempt")
+	ErrNoValidQuestions        = errors.New("no valid questions in submission")
+	ErrDraftConflict           = errors.New("draft conflict, another tab may have updated it")
 )

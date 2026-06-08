@@ -517,12 +517,17 @@ func (h *HTTPHandler) saveDraft(c *gin.Context) {
 		return
 	}
 
-	if err := h.attemptSvc.SaveDraft(claims.UserID, req); err != nil {
+	updatedAt, err := h.attemptSvc.SaveDraft(claims.UserID, req)
+	if err != nil {
+		if errors.Is(err, service.ErrDraftConflict) {
+			c.JSON(http.StatusConflict, gin.H{"message": err.Error()})
+			return
+		}
 		h.log.Error("save draft failed", "error", err.Error())
 		c.JSON(http.StatusInternalServerError, gin.H{"message": "save draft failed"})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"message": "draft saved"})
+	c.JSON(http.StatusOK, gin.H{"message": "draft saved", "updatedAt": updatedAt})
 }
 
 func (h *HTTPHandler) getDraft(c *gin.Context) {
@@ -826,6 +831,10 @@ func (h *HTTPHandler) respondServiceError(c *gin.Context, err error) {
 		c.JSON(http.StatusNotFound, gin.H{"message": err.Error()})
 	case errors.Is(err, service.ErrAttemptForbidden):
 		c.JSON(http.StatusForbidden, gin.H{"message": err.Error()})
+	case errors.Is(err, service.ErrDraftConflict):
+		c.JSON(http.StatusConflict, gin.H{"message": err.Error()})
+	case errors.Is(err, service.ErrNoValidQuestions):
+		c.JSON(http.StatusBadRequest, gin.H{"message": err.Error()})
 	default:
 		h.log.Error("service error", "error", err.Error())
 		c.JSON(http.StatusInternalServerError, gin.H{"message": "internal server error"})

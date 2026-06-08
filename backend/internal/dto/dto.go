@@ -178,12 +178,15 @@ type MistakeReviewResult struct {
 	NewlyMastered    []MistakeReviewAnswerDetail `json:"newlyMastered"`
 	StillNeedReview  []MistakeReviewAnswerDetail `json:"stillNeedReview"`
 	Details          []MistakeReviewAnswerDetail `json:"details"`
+	SkippedCount     int                       `json:"skippedCount"`
 }
 
 type SaveDraftRequest struct {
-	QuizMode  string                   `json:"quizMode" binding:"required,oneof=normal review"`
-	Questions []map[string]interface{} `json:"questions" binding:"required,min=1"`
-	Answers   map[string]interface{}   `json:"answers" binding:"required"`
+	QuizMode    string                   `json:"quizMode" binding:"required,oneof=normal review"`
+	Questions   []map[string]interface{} `json:"questions" binding:"required,min=1"`
+	Answers     map[string]interface{}   `json:"answers" binding:"required"`
+	LastUpdated string                   `json:"lastUpdated"`
+	Force       bool                     `json:"force"`
 }
 
 type DraftResponse struct {

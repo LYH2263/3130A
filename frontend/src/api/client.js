@@ -128,15 +128,22 @@ export async function submitMistakeReview(token, answers) {
   });
 }
 
-export async function saveDraft(token, quizMode, questions, answers) {
+export async function saveDraft(token, quizMode, questions, answers, lastUpdated = '', force = false) {
+  const body = {
+    quizMode,
+    questions,
+    answers,
+  };
+  if (lastUpdated) {
+    body.lastUpdated = lastUpdated;
+  }
+  if (force) {
+    body.force = true;
+  }
   return apiRequest('/student/draft', {
     method: 'POST',
     token,
-    body: {
-      quizMode,
-      questions,
-      answers,
-    },
+    body,
   });
 }
 

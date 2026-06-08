@@ -683,6 +683,9 @@ export function StudentDashboard({ user, token, onLogout }) {
   const [leaderboard, setLeaderboard] = useState(null);
   const [leaderboardLoading, setLeaderboardLoading] = useState(false);
   const [leaderboardScoreType, setLeaderboardScoreType] = useState('highest');
+  const [lastDraftUpdated, setLastDraftUpdated] = useState('');
+  const [showDraftConflictDialog, setShowDraftConflictDialog] = useState(false);
+  const [pendingDraftData, setPendingDraftData] = useState(null);
   const saveDraftTimerRef = useRef(null);
   const saveDraftStatusTimerRef = useRef(null);
   const hasAutoSubmittedRef = useRef(false);
@@ -861,6 +864,7 @@ export function StudentDashboard({ user, token, onLogout }) {
       setNormalQuizKPMap({});
       setMistakeReviewResult(null);
       setQuizMode(mode);
+      setLastDraftUpdated('');
       setDeadline(quizDeadline);
       setStartedAt(quizStartedAt);
       setAllowEarlySubmit(quizAllowEarlySubmit);
@@ -994,10 +998,20 @@ export function StudentDashboard({ user, token, onLogout }) {
     }
   };
 
-  const doSaveDraft = async (questionsToSave, answersToSave, mode) => {
+  const doSaveDraft = async (questionsToSave, answersToSave, mode, force = false) => {
     try {
       setSaveDraftStatus('saving');
-      await saveDraft(token, mode, questionsToSave, answersToSave);
+      const result = await saveDraft(
+        token,
+        mode,
+        questionsToSave,
+        answersToSave,
+        force ? '' : lastDraftUpdated,
+        force
+      );
+      if (result && result.updatedAt) {
+        setLastDraftUpdated(result.updatedAt);
+      }
       setSaveDraftStatus('saved');
       if (saveDraftStatusTimerRef.current) {
         clearTimeout(saveDraftStatusTimerRef.current);
@@ -1006,9 +1020,29 @@ export function StudentDashboard({ user, token, onLogout }) {
         setSaveDraftStatus('idle');
       }, 2000);
     } catch (error) {
+      if (error && error.message === 'draft conflict, another tab may have updated it') {
+        setSaveDraftStatus('conflict');
+        setPendingDraftData({ questions: questionsToSave, answers: answersToSave, mode });
+        setShowDraftConflictDialog(true);
+        return;
+      }
       setSaveDraftStatus('error');
       console.error('save draft failed', error);
     }
+  };
+
+  const forceSaveDraft = async () => {
+    if (!pendingDraftData) return;
+    setShowDraftConflictDialog(false);
+    await doSaveDraft(pendingDraftData.questions, pendingDraftData.answers, pendingDraftData.mode, true);
+    setPendingDraftData(null);
+    toast.success('已覆盖保存');
+  };
+
+  const cancelSaveDraft = () => {
+    setShowDraftConflictDialog(false);
+    setPendingDraftData(null);
+    setSaveDraftStatus('idle');
   };
 
   const debouncedSaveDraft = (questionsToSave, answersToSave, mode) => {
@@ -1034,6 +1068,7 @@ export function StudentDashboard({ user, token, onLogout }) {
     setQuestions(draftData.questions);
     setAnswers(restoredAnswers);
     setQuizMode(draftData.quizMode || 'normal');
+    setLastDraftUpdated(draftData.updatedAt || '');
     setLastResult(null);
     setMistakeReviewResult(null);
     setShowDraftDialog(false);
@@ -1330,6 +1365,8 @@ export function StudentDashboard({ user, token, onLogout }) {
                           ? 'text-slate-400 opacity-100'
                           : saveDraftStatus === 'error'
                           ? 'text-red-500 opacity-100'
+                          : saveDraftStatus === 'conflict'
+                          ? 'text-amber-600 opacity-100'
                           : 'opacity-0'
                       }`}
                     >
@@ -1339,6 +1376,8 @@ export function StudentDashboard({ user, token, onLogout }) {
                         ? '保存中...'
                         : saveDraftStatus === 'error'
                         ? '保存失败'
+                        : saveDraftStatus === 'conflict'
+                        ? '⚠ 有冲突'
                         : ''}
                     </span>
                   )}
@@ -1645,6 +1684,35 @@ export function StudentDashboard({ user, token, onLogout }) {
                 onClick={handleDiscardAndRestart}
               >
                 放弃重开
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showDraftConflictDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="mx-4 w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
+            <h3 className="text-lg font-semibold text-slate-800">草稿保存冲突</h3>
+            <p className="mt-2 text-sm text-slate-600">
+              检测到其他标签页有更新的答题进度。
+              若继续保存，可能会覆盖其他页面的答题记录。
+            </p>
+            <p className="mt-2 text-sm text-amber-600">
+              请确认是否用当前页面的进度覆盖？
+            </p>
+            <div className="mt-6 flex gap-3">
+              <button
+                className="btn btn-primary flex-1"
+                onClick={forceSaveDraft}
+              >
+                覆盖保存
+              </button>
+              <button
+                className="btn btn-outline flex-1"
+                onClick={cancelSaveDraft}
+              >
+                取消
               </button>
             </div>
           </div>

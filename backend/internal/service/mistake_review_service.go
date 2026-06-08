@@ -194,9 +194,6 @@ func (s *MistakeReviewService) SubmitReview(userID uint, classID uint, req dto.S
 	if err := s.db.Preload("Options").Preload("BlankAnswers").Where("id IN ?", questionIDs).Find(&questions).Error; err != nil {
 		return nil, fmt.Errorf("load questions: %w", err)
 	}
-	if len(questions) == 0 {
-		return nil, ErrNoQuestions
-	}
 
 	questionMap := make(map[uint]models.Question, len(questions))
 	for _, q := range questions {
@@ -217,14 +214,16 @@ func (s *MistakeReviewService) SubmitReview(userID uint, classID uint, req dto.S
 	totalMaxScore := 0
 	newlyMastered := make([]dto.MistakeReviewAnswerDetail, 0)
 	stillNeedReview := make([]dto.MistakeReviewAnswerDetail, 0)
+	validAnswers := make([]dto.SubmitAnswerItem, 0, len(req.Answers))
 
 	now := time.Now()
 
 	for _, answer := range req.Answers {
 		question, ok := questionMap[answer.QuestionID]
 		if !ok {
-			return nil, ErrInvalidSubmission
+			continue
 		}
+		validAnswers = append(validAnswers, answer)
 
 		score, maxScore, status := gradeQuestion(question, answer)
 		isCorrect := status == dto.AnswerStatusCorrect
@@ -281,12 +280,16 @@ func (s *MistakeReviewService) SubmitReview(userID uint, classID uint, req dto.S
 		}
 	}
 
+	if len(validAnswers) == 0 {
+		return nil, ErrNoValidQuestions
+	}
+
 	tx := s.db.Begin()
 	if tx.Error != nil {
 		return nil, fmt.Errorf("begin transaction: %w", tx.Error)
 	}
 
-	for _, answer := range req.Answers {
+	for _, answer := range validAnswers {
 		review := reviewMap[answer.QuestionID]
 		if review.ID == 0 {
 			if err := tx.Create(review).Error; err != nil {
@@ -301,8 +304,8 @@ func (s *MistakeReviewService) SubmitReview(userID uint, classID uint, req dto.S
 		}
 	}
 
-	answersModel := make([]models.AttemptAnswer, 0, len(req.Answers))
-	for _, answer := range req.Answers {
+	answersModel := make([]models.AttemptAnswer, 0, len(validAnswers))
+	for _, answer := range validAnswers {
 		question := questionMap[answer.QuestionID]
 		score, maxScore, status := gradeQuestion(question, answer)
 		isCorrect := status == dto.AnswerStatusCorrect
@@ -341,14 +344,17 @@ func (s *MistakeReviewService) SubmitReview(userID uint, classID uint, req dto.S
 	}
 
 	rate := fmt.Sprintf("%.0f%%", (float64(totalScore)/float64(totalMaxScore))*100)
-	s.log.Info("mistake review submitted", "userID", userID, "score", totalScore, "total", totalMaxScore, "newlyMastered", len(newlyMastered))
+	skippedCount := len(req.Answers) - len(validAnswers)
+	s.log.Info("mistake review submitted", "userID", userID, "score", totalScore, "total", totalMaxScore, "newlyMastered", len(newlyMastered), "skipped", skippedCount)
 
-	return &dto.MistakeReviewResult{
+	result := &dto.MistakeReviewResult{
 		Score:           totalScore,
 		Total:           totalMaxScore,
 		Rate:            rate,
 		NewlyMastered:   newlyMastered,
 		StillNeedReview: stillNeedReview,
 		Details:         details,
-	}, nil
+		SkippedCount:    skippedCount,
+	}
+	return result, nil
 }
