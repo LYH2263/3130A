@@ -4,6 +4,7 @@ import (
 	"database/sql/driver"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 )
 
@@ -48,9 +49,14 @@ func (a *UintArray) Scan(value interface{}) error {
 		*a = nil
 		return nil
 	}
-	bytes, ok := value.([]byte)
-	if !ok {
-		return errors.New("invalid data type for UintArray")
+	var bytes []byte
+	switch v := value.(type) {
+	case []byte:
+		bytes = v
+	case string:
+		bytes = []byte(v)
+	default:
+		return fmt.Errorf("invalid data type for UintArray: %T", value)
 	}
 	return json.Unmarshal(bytes, a)
 }
@@ -227,7 +233,7 @@ type QuestionSet struct {
 	UserID        uint      `gorm:"index;not null" json:"userId"`
 	Name          string    `gorm:"size:128;not null" json:"name"`
 	Description   string    `gorm:"size:500" json:"description"`
-	QuestionIDs   UintArray `gorm:"type:json" json:"questionIds"`
+	QuestionIDs   UintArray `gorm:"column:question_ids;type:json" json:"questionIds"`
 	SortOrder     int       `gorm:"not null;default:0" json:"sortOrder"`
 	QuestionCount int       `gorm:"-" json:"questionCount"`
 	CreatedAt     time.Time `json:"createdAt"`

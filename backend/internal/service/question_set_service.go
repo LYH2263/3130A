@@ -136,36 +136,35 @@ func (s *QuestionSetService) UpdateSet(userID uint, setID uint, req dto.UpdateQu
 		return nil, ErrQuestionSetForbidden
 	}
 
-	updates := map[string]interface{}{}
-
+	updated := false
 	if req.Name != "" {
-		updates["name"] = strings.TrimSpace(req.Name)
+		set.Name = strings.TrimSpace(req.Name)
+		updated = true
 	}
 	if req.Description != "" {
-		updates["description"] = strings.TrimSpace(req.Description)
+		set.Description = strings.TrimSpace(req.Description)
+		updated = true
 	}
 	if req.QuestionIDs != nil {
-		updates["question_i_ds"] = req.QuestionIDs
+		set.QuestionIDs = req.QuestionIDs
+		updated = true
 	}
 	if req.SortOrder != nil {
-		updates["sort_order"] = *req.SortOrder
+		set.SortOrder = *req.SortOrder
+		updated = true
 	}
 
-	if len(updates) > 0 {
-		if err := s.db.Model(&set).Updates(updates).Error; err != nil {
+	if updated {
+		if err := s.db.Save(&set).Error; err != nil {
 			return nil, fmt.Errorf("update question set: %w", err)
 		}
-		if err := s.db.First(&set, setID).Error; err != nil {
-			return nil, fmt.Errorf("reload question set: %w", err)
-		}
+		s.log.Info("question set updated", "setId", set.ID, "userId", userID)
 	}
 
 	qCount := 0
 	if set.QuestionIDs != nil {
 		qCount = len(set.QuestionIDs)
 	}
-
-	s.log.Info("question set updated", "setId", set.ID, "userId", userID)
 
 	return &dto.QuestionSetDTO{
 		ID:            set.ID,
@@ -309,8 +308,10 @@ func (s *QuestionSetService) GetSetQuestions(userID uint, setID uint) ([]Student
 	}
 
 	var questions []models.Question
+	qids := make([]uint, len(set.QuestionIDs))
+	copy(qids, set.QuestionIDs)
 	if err := s.db.Preload("Options").Preload("BlankAnswers").
-		Where("id IN ?", set.QuestionIDs).
+		Where("id IN ?", qids).
 		Find(&questions).Error; err != nil {
 		return nil, fmt.Errorf("get set questions: %w", err)
 	}
