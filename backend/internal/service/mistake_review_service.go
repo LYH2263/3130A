@@ -119,7 +119,7 @@ func (s *MistakeReviewService) GetMistakeReviews(userID uint) ([]dto.MistakeRevi
 	return result, nil
 }
 
-func (s *MistakeReviewService) GenerateReviewQuiz(userID uint, limit int) ([]models.Question, error) {
+func (s *MistakeReviewService) GenerateReviewQuiz(userID uint, limit int) ([]StudentQuestion, error) {
 	if limit <= 0 || limit > 50 {
 		limit = 10
 	}
@@ -137,7 +137,7 @@ func (s *MistakeReviewService) GenerateReviewQuiz(userID uint, limit int) ([]mod
 	}
 
 	if len(pendingIDs) == 0 {
-		return []models.Question{}, nil
+		return []StudentQuestion{}, nil
 	}
 
 	targetCount := limit
@@ -156,11 +156,29 @@ func (s *MistakeReviewService) GenerateReviewQuiz(userID uint, limit int) ([]mod
 		questionMap[q.ID] = q
 	}
 
-	result := make([]models.Question, 0, len(selectedIDs))
+	orderedQuestions := make([]models.Question, 0, len(selectedIDs))
 	for _, id := range selectedIDs {
 		if q, ok := questionMap[id]; ok {
-			result = append(result, q)
+			orderedQuestions = append(orderedQuestions, q)
 		}
+	}
+
+	result := make([]StudentQuestion, 0, len(orderedQuestions))
+	for _, q := range orderedQuestions {
+		sq := StudentQuestion{
+			ID:          q.ID,
+			Type:        q.Type,
+			Title:       q.Title,
+			Description: q.Description,
+		}
+		if q.Type != models.QuestionTypeBlank {
+			opts := make([]StudentOption, 0, len(q.Options))
+			for _, opt := range q.Options {
+				opts = append(opts, StudentOption{ID: opt.ID, Content: opt.Content})
+			}
+			sq.Options = opts
+		}
+		result = append(result, sq)
 	}
 
 	return result, nil
@@ -220,6 +238,7 @@ func (s *MistakeReviewService) SubmitReview(userID uint, classID uint, req dto.S
 				QuestionID: answer.QuestionID,
 				Status:     models.MistakeReviewStatusPending,
 			}
+			reviewMap[answer.QuestionID] = review
 		}
 
 		wasMastered := review.Status == models.MistakeReviewStatusMastered
