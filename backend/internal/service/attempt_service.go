@@ -114,15 +114,39 @@ func (s *AttemptService) Submit(userID uint, classID uint, req dto.SubmitRequest
 			IsCorrect:    isCorrect,
 			Score:        score,
 			MaxScore:     maxScore,
+			QuestionTitle: question.Title,
 		}
 
 		switch question.Type {
 		case models.QuestionTypeSingle, models.QuestionTypeJudge:
 			ansModel.SelectedOptionID = answer.OptionID
+			opts := make([]models.SnapshotOption, 0, len(question.Options))
+			for _, opt := range question.Options {
+				opts = append(opts, models.SnapshotOption{
+					ID:        opt.ID,
+					Content:   opt.Content,
+					IsCorrect: opt.IsCorrect,
+				})
+			}
+			ansModel.OptionSnapshots = models.SnapshotOptionArray(opts)
 		case models.QuestionTypeMultiple:
 			ansModel.SelectedOptionIDs = models.UintArray(answer.OptionIDs)
+			opts := make([]models.SnapshotOption, 0, len(question.Options))
+			for _, opt := range question.Options {
+				opts = append(opts, models.SnapshotOption{
+					ID:        opt.ID,
+					Content:   opt.Content,
+					IsCorrect: opt.IsCorrect,
+				})
+			}
+			ansModel.OptionSnapshots = models.SnapshotOptionArray(opts)
 		case models.QuestionTypeBlank:
 			ansModel.BlankAnswer = answer.BlankAnswer
+			correctAnswers := make([]string, 0, len(question.BlankAnswers))
+			for _, ba := range question.BlankAnswers {
+				correctAnswers = append(correctAnswers, ba.Answer)
+			}
+			ansModel.CorrectBlankAnswers = models.StringArray(correctAnswers)
 		}
 
 		answersModel = append(answersModel, ansModel)
@@ -646,25 +670,29 @@ func (s *AttemptService) GetAttemptDetail(userID uint, attemptID uint) (*dto.Att
 		return nil, ErrAttemptForbidden
 	}
 
-	answerIDs := make([]uint, 0, len(attempt.Answers))
 	questionIDSet := map[uint]struct{}{}
+	hasSnapshotCount := 0
 	for _, a := range attempt.Answers {
-		answerIDs = append(answerIDs, a.ID)
 		questionIDSet[a.QuestionID] = struct{}{}
+		if a.QuestionTitle != "" {
+			hasSnapshotCount++
+		}
 	}
 
-	questionIDs := make([]uint, 0, len(questionIDSet))
-	for id := range questionIDSet {
-		questionIDs = append(questionIDs, id)
-	}
-
-	var questions []models.Question
-	if err := s.db.Preload("Options").Preload("BlankAnswers").Where("id IN ?", questionIDs).Find(&questions).Error; err != nil {
-		return nil, fmt.Errorf("load questions: %w", err)
-	}
-	questionMap := map[uint]models.Question{}
-	for _, q := range questions {
-		questionMap[q.ID] = q
+	var questionMap map[uint]models.Question
+	if hasSnapshotCount < len(attempt.Answers) {
+		questionIDs := make([]uint, 0, len(questionIDSet))
+		for id := range questionIDSet {
+			questionIDs = append(questionIDs, id)
+		}
+		var questions []models.Question
+		if err := s.db.Preload("Options").Preload("BlankAnswers").Where("id IN ?", questionIDs).Find(&questions).Error; err != nil {
+			return nil, fmt.Errorf("load questions: %w", err)
+		}
+		questionMap = make(map[uint]models.Question, len(questions))
+		for _, q := range questions {
+			questionMap[q.ID] = q
+		}
 	}
 
 	answers := make([]dto.AttemptReportAnswer, 0, len(attempt.Answers))
@@ -672,14 +700,20 @@ func (s *AttemptService) GetAttemptDetail(userID uint, attemptID uint) (*dto.Att
 	wrongCount := 0
 
 	for _, ans := range attempt.Answers {
-		q, ok := questionMap[ans.QuestionID]
-		if !ok {
-			continue
+		hasSnapshot := ans.QuestionTitle != ""
+		q, qExists := questionMap[ans.QuestionID]
+
+		title := ans.QuestionTitle
+		if !hasSnapshot && qExists {
+			title = q.Title
+		}
+		if title == "" {
+			title = fmt.Sprintf("题目 %d（已删除）", ans.QuestionID)
 		}
 
 		reportAns := dto.AttemptReportAnswer{
 			QuestionID:    ans.QuestionID,
-			QuestionTitle: q.Title,
+			QuestionTitle: title,
 			QuestionType:  ans.QuestionType,
 			Score:         ans.Score,
 			MaxScore:      ans.MaxScore,
@@ -694,13 +728,25 @@ func (s *AttemptService) GetAttemptDetail(userID uint, attemptID uint) (*dto.Att
 
 		switch ans.QuestionType {
 		case models.QuestionTypeSingle, models.QuestionTypeJudge, models.QuestionTypeMultiple:
-			opts := make([]dto.AttemptReportOption, 0, len(q.Options))
-			for _, opt := range q.Options {
-				opts = append(opts, dto.AttemptReportOption{
-					ID:        opt.ID,
-					Content:   opt.Content,
-					IsCorrect: opt.IsCorrect,
-				})
+			var opts []dto.AttemptReportOption
+			if hasSnapshot && len(ans.OptionSnapshots) > 0 {
+				opts = make([]dto.AttemptReportOption, 0, len(ans.OptionSnapshots))
+				for _, opt := range ans.OptionSnapshots {
+					opts = append(opts, dto.AttemptReportOption{
+						ID:        opt.ID,
+						Content:   opt.Content,
+						IsCorrect: opt.IsCorrect,
+					})
+				}
+			} else if qExists {
+				opts = make([]dto.AttemptReportOption, 0, len(q.Options))
+				for _, opt := range q.Options {
+					opts = append(opts, dto.AttemptReportOption{
+						ID:        opt.ID,
+						Content:   opt.Content,
+						IsCorrect: opt.IsCorrect,
+					})
+				}
 			}
 			reportAns.Options = opts
 
@@ -711,9 +757,14 @@ func (s *AttemptService) GetAttemptDetail(userID uint, attemptID uint) (*dto.Att
 			}
 		case models.QuestionTypeBlank:
 			reportAns.BlankAnswer = ans.BlankAnswer
-			correctAnswers := make([]string, 0, len(q.BlankAnswers))
-			for _, ba := range q.BlankAnswers {
-				correctAnswers = append(correctAnswers, ba.Answer)
+			var correctAnswers []string
+			if hasSnapshot && len(ans.CorrectBlankAnswers) > 0 {
+				correctAnswers = []string(ans.CorrectBlankAnswers)
+			} else if qExists {
+				correctAnswers = make([]string, 0, len(q.BlankAnswers))
+				for _, ba := range q.BlankAnswers {
+					correctAnswers = append(correctAnswers, ba.Answer)
+				}
 			}
 			reportAns.CorrectBlankAnswers = correctAnswers
 		}

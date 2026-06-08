@@ -61,6 +61,64 @@ func (a *UintArray) Scan(value interface{}) error {
 	return json.Unmarshal(bytes, a)
 }
 
+type SnapshotOption struct {
+	ID        uint   `json:"id"`
+	Content   string `json:"content"`
+	IsCorrect bool   `json:"isCorrect"`
+}
+
+type SnapshotOptionArray []SnapshotOption
+
+func (a SnapshotOptionArray) Value() (driver.Value, error) {
+	if a == nil {
+		return nil, nil
+	}
+	return json.Marshal(a)
+}
+
+func (a *SnapshotOptionArray) Scan(value interface{}) error {
+	if value == nil {
+		*a = nil
+		return nil
+	}
+	var bytes []byte
+	switch v := value.(type) {
+	case []byte:
+		bytes = v
+	case string:
+		bytes = []byte(v)
+	default:
+		return fmt.Errorf("invalid data type for SnapshotOptionArray: %T", value)
+	}
+	return json.Unmarshal(bytes, a)
+}
+
+type StringArray []string
+
+func (a StringArray) Value() (driver.Value, error) {
+	if a == nil {
+		return nil, nil
+	}
+	return json.Marshal(a)
+}
+
+func (a *StringArray) Scan(value interface{}) error {
+	if value == nil {
+		*a = nil
+		return nil
+	}
+	var bytes []byte
+	switch v := value.(type) {
+	case []byte:
+		bytes = v
+	case string:
+		bytes = []byte(v)
+	default:
+		return fmt.Errorf("invalid data type for StringArray: %T", value)
+	}
+	return json.Unmarshal(bytes, a)
+}
+
 type ClassRoom struct {
 	ID        uint      `gorm:"primaryKey" json:"id"`
 	Name      string    `gorm:"size:64;uniqueIndex;not null" json:"name"`
@@ -176,18 +234,21 @@ type Attempt struct {
 }
 
 type AttemptAnswer struct {
-	ID                 uint      `gorm:"primaryKey" json:"id"`
-	AttemptID          uint      `gorm:"index;not null" json:"attemptId"`
-	QuestionID         uint      `gorm:"index;not null" json:"questionId"`
-	QuestionType       string    `gorm:"size:16;not null" json:"questionType"`
-	SelectedOptionID   uint      `gorm:"index" json:"selectedOptionId,omitempty"`
-	SelectedOptionIDs  UintArray `gorm:"type:json" json:"selectedOptionIds,omitempty"`
-	BlankAnswer        string    `gorm:"type:text" json:"blankAnswer,omitempty"`
-	IsCorrect          bool      `gorm:"index;not null" json:"isCorrect"`
-	Score              int       `gorm:"not null;default:0" json:"score"`
-	MaxScore           int       `gorm:"not null;default:100" json:"maxScore"`
-	CreatedAt          time.Time `json:"createdAt"`
-	UpdatedAt          time.Time `json:"updatedAt"`
+	ID                 uint              `gorm:"primaryKey" json:"id"`
+	AttemptID          uint              `gorm:"index;not null" json:"attemptId"`
+	QuestionID         uint              `gorm:"index;not null" json:"questionId"`
+	QuestionType       string            `gorm:"size:16;not null" json:"questionType"`
+	SelectedOptionID   uint              `gorm:"index" json:"selectedOptionId,omitempty"`
+	SelectedOptionIDs  UintArray         `gorm:"type:json" json:"selectedOptionIds,omitempty"`
+	BlankAnswer        string            `gorm:"type:text" json:"blankAnswer,omitempty"`
+	IsCorrect          bool              `gorm:"index;not null" json:"isCorrect"`
+	Score              int               `gorm:"not null;default:0" json:"score"`
+	MaxScore           int               `gorm:"not null;default:100" json:"maxScore"`
+	QuestionTitle      string            `gorm:"type:text" json:"questionTitle,omitempty"`
+	OptionSnapshots    SnapshotOptionArray `gorm:"type:json" json:"optionSnapshots,omitempty"`
+	CorrectBlankAnswers StringArray     `gorm:"type:json" json:"correctBlankAnswers,omitempty"`
+	CreatedAt          time.Time         `json:"createdAt"`
+	UpdatedAt          time.Time         `json:"updatedAt"`
 }
 
 type MistakeReview struct {

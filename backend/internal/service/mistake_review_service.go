@@ -310,19 +310,43 @@ func (s *MistakeReviewService) SubmitReview(userID uint, classID uint, req dto.S
 		score, maxScore, status := gradeQuestion(question, answer)
 		isCorrect := status == dto.AnswerStatusCorrect
 		ansModel := models.AttemptAnswer{
-			QuestionID:   answer.QuestionID,
-			QuestionType: question.Type,
-			IsCorrect:    isCorrect,
-			Score:        score,
-			MaxScore:     maxScore,
+			QuestionID:    answer.QuestionID,
+			QuestionType:  question.Type,
+			IsCorrect:     isCorrect,
+			Score:         score,
+			MaxScore:      maxScore,
+			QuestionTitle: question.Title,
 		}
 		switch question.Type {
 		case models.QuestionTypeSingle, models.QuestionTypeJudge:
 			ansModel.SelectedOptionID = answer.OptionID
+			opts := make([]models.SnapshotOption, 0, len(question.Options))
+			for _, opt := range question.Options {
+				opts = append(opts, models.SnapshotOption{
+					ID:        opt.ID,
+					Content:   opt.Content,
+					IsCorrect: opt.IsCorrect,
+				})
+			}
+			ansModel.OptionSnapshots = models.SnapshotOptionArray(opts)
 		case models.QuestionTypeMultiple:
 			ansModel.SelectedOptionIDs = models.UintArray(answer.OptionIDs)
+			opts := make([]models.SnapshotOption, 0, len(question.Options))
+			for _, opt := range question.Options {
+				opts = append(opts, models.SnapshotOption{
+					ID:        opt.ID,
+					Content:   opt.Content,
+					IsCorrect: opt.IsCorrect,
+				})
+			}
+			ansModel.OptionSnapshots = models.SnapshotOptionArray(opts)
 		case models.QuestionTypeBlank:
 			ansModel.BlankAnswer = answer.BlankAnswer
+			correctAnswers := make([]string, 0, len(question.BlankAnswers))
+			for _, ba := range question.BlankAnswers {
+				correctAnswers = append(correctAnswers, ba.Answer)
+			}
+			ansModel.CorrectBlankAnswers = models.StringArray(correctAnswers)
 		}
 		answersModel = append(answersModel, ansModel)
 	}
