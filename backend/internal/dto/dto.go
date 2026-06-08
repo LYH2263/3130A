@@ -1,5 +1,7 @@
 package dto
 
+import "label3130/backend/internal/models"
+
 type RegisterRequest struct {
 	Username string `json:"username" binding:"required,min=3,max=32"`
 	Password string `json:"password" binding:"required,min=6,max=64"`
@@ -74,6 +76,9 @@ type QuestionDetail struct {
 	HasAnswerError       bool     `json:"hasAnswerError"`
 	CreatedAt            string   `json:"createdAt"`
 	UpdatedAt            string   `json:"updatedAt"`
+	Options              []models.QuestionOption `json:"options,omitempty"`
+	BlankAnswers         []models.BlankAnswer    `json:"blankAnswers,omitempty"`
+	Tags                 []models.Tag            `json:"tags,omitempty"`
 }
 
 type KnowledgePointInfo struct {

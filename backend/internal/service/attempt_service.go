@@ -1178,7 +1178,6 @@ func buildRankedItems(scores []*userScore, currentUserID *uint) []dto.Leaderboar
 
 	rank := 1
 	prevScore := 0.0
-	rankStarted := false
 	answeredCount := 0
 
 	for _, us := range scores {
